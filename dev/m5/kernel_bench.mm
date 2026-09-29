@@ -53,6 +53,12 @@ const std::vector<Shape> kShapes = {
     {"attn_qkv", 14336, 5120, LinearEpilogue::None},     // attention q/k/v (16)
     {"gate_up", 17408, 5120, LinearEpilogue::GateUp},    // FFN gate+up (64)
     {"ffn_gate", 17408, 5120, LinearEpilogue::None},    // FFN gate alone (B3/B4 split gate/up)
+    {"draft_dyn", 1280, 5120, LinearEpilogue::None},    // DFlash draft attention/MLP dynamic (10 per step)
+    {"draft_down", 5120, 17408, LinearEpilogue::None},  // DFlash draft down (plain; 5 per step)
+    {"draft_out", 5120, 4096, LinearEpilogue::None},    // DFlash draft attention output (5 per step)
+    {"plain_6144", 6144, 5120, LinearEpilogue::None},   // one-lane plain 6144 x 5120 (10 per step)
+    {"plain_256", 256, 5120, LinearEpilogue::None},     // one-lane plain 256 x 5120 (1 per step)
+    {"plain_k25600", 5120, 25600, LinearEpilogue::None}, // one-lane plain 5120 x 25600 (1 per step)
     // Qwen3.6-35B-A3B dense projections (tuning/m5max-40c-qwen36-35b.choices)
     {"q36_12544", 12544, 2048, LinearEpilogue::None},
     {"q36_9216", 9216, 2048, LinearEpilogue::None},
@@ -79,6 +85,7 @@ std::string tileName(LinearTile t) {
   case LinearTile::Paired256: return "paired256";
   case LinearTile::Simdgroup: return "simdgroup";
   case LinearTile::SplitSums32: return "splitsums32";
+  case LinearTile::Deep256: return "deep256";
   case LinearTile::GgufStaged: return "ggufstaged";
   case LinearTile::GgufRegister: return "ggufregister";
   default: return "other";
@@ -86,7 +93,7 @@ std::string tileName(LinearTile t) {
 }
 LinearTile tileFrom(const std::string &s) {
   for (auto t : {LinearTile::N128, LinearTile::N256, LinearTile::Paired128, LinearTile::Split32,
-                 LinearTile::Split64, LinearTile::Paired256, LinearTile::Simdgroup, LinearTile::SplitSums32,
+                 LinearTile::Split64, LinearTile::Paired256, LinearTile::Simdgroup, LinearTile::SplitSums32, LinearTile::Deep256,
                  LinearTile::GgufStaged, LinearTile::GgufRegister})
     if (tileName(t) == s) return t;
   throw std::invalid_argument("unknown tile " + s);
