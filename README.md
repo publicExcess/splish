@@ -46,15 +46,26 @@ request on Qwen3.6-35B-A3B; see [RESULTS.md](RESULTS.md).*
 
 ## Quality
 
-Splish changes kernels, not the model. Outputs can differ from stock at near-ties (sums added in a different order),
-so we measure accuracy directly:
+Splish changes kernels, not the model. In deterministic runs (greedy, thinking off) over 1,621 benchmark items
+(MMLU-Pro, CMMLU, TruthfulQA, GSM8K, HumanEval, MBPP, long context), Splish and stock Splash 1.1.0 scored within
+0.1 points of each other on Swift-1.5: 82.7% vs 82.8%, with 4 items differing (not significant, p = 0.63). Every
+model also passes our 95-task smoke set (95/95).
 
-| Test | Stock Splash 1.1.0 | Splish |
-|---|---:|---:|
-| 95-task set (maths, code, reasoning), Inco's Qwen3.8-27B | 95/95 | 95/95 |
-| 95-task set, Swift-1.5 | 95/95 | 95/95 (380/380 with four copies at once) |
-| 95-task set, Qwen3.6-35B-A3B | not measured | 95/95 |
-| 1,621 benchmark items, greedy, Swift-1.5: MMLU-Pro, CMMLU, TruthfulQA, GSM8K, HumanEval, MBPP, long context | 82.8% | 82.7% (4 items differ; p = 0.63) |
+**Swift-1.5 on Splish at the recommended settings** (thinking on at its default effort, temperature 1.0, top-p 0.95,
+top-k 20), accuracy with 95% intervals:
+
+| Task | Accuracy |
+|---|---:|
+| MMLU-Pro | 72.3% (63.4–80.3) |
+| CMMLU | 93.3% (89.3–96.7) |
+| TruthfulQA MC1 | 89.0% (86.5–91.5) |
+| HumanEval | 99.4% (98.2–100) |
+| MBPP | 91.7% (82.3–98.8) |
+| Long-context retrieval, harder items (4K–15K tokens) | 95.0% |
+
+421 items: every item the greedy run got wrong, plus 1 in 8 of those it got right, weighted back to the full task
+(per-task estimates with bootstrap intervals). Thinking up to ~32K tokens; 5 of 421 answers ran out of room and
+count as wrong. Method and per-item data: [RESULTS.md](RESULTS.md).
 
 ## Quick start
 

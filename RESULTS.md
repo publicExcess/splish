@@ -14,6 +14,7 @@ are ties**. Quality: a 95-task set and a 1,621-item benchmark set, both builds.
 | GGUF choices v2 (the DFlash draft tuned) | step time Q8_0 −2.8% / −2.8% / −4.9% / −6.6% at 1–4 requests; Q4_K_M −4.5% / −3.9% at 3–4 |
 | 20-core M5 Pro table (Michael McCrimmons) | step −6.8% at one request, −6.8 to −8.4% at two, on his M5 Pro |
 | Quality | Swift-1.5 on 1,621 items, greedy: stock 82.8%, Splish 82.7% (4 items differ, 1 vs 3; p = 0.63) |
+| Quality at the recommended settings | Swift-1.5, thinking on: MMLU-Pro 72.3%, CMMLU 93.3%, TruthfulQA 89.0%, HumanEval 99.4%, MBPP 91.7%, hard long context 95.0% (421-item weighted sample of the 1,621; every greedy-wrong item + 1 in 8 greedy-right; bootstrap 95% intervals in the README) |
 | Fixes | tokenizer (Hindi, Thai, Arabic samples: 14–53% fewer tokens); very thin images padded instead of rejected |
 
 ## v1.0 (September 2026)
