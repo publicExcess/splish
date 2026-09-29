@@ -60,11 +60,21 @@ def parse(text):
     return widths
 
 
+# Two-sided 95% Student-t critical values: a handful of rounds is far from the normal 1.96.
+T975 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262,
+        10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120, 19: 2.093,
+        24: 2.064, 29: 2.045}
+
+
 def interval(values):
     m = st.mean(values)
     if len(values) < 2:
         return m, float("nan")
-    return m, 1.96 * st.stdev(values) / math.sqrt(len(values))
+    df = len(values) - 1
+    # The nearest tabulated df at or below this one: conservative apart from rounding the
+    # tabulated critical values to three decimal places.
+    t = T975[max(k for k in T975 if k <= df)]
+    return m, t * st.stdev(values) / math.sqrt(len(values))
 
 
 def main():
@@ -76,6 +86,7 @@ def main():
     ap.add_argument("--binary", default=os.path.join(ROOT, "build/engine-tests/decode-profile"))
     ap.add_argument("--package", default=PACKAGE, help="package or GGUF assembly root")
     ap.add_argument("--metallib", default=os.path.join(ROOT, "build/splash.metallib"))
+    ap.add_argument("--show", default="", help="comma-separated pipelines always listed with their attributed ms")
     args = ap.parse_args()
     if not args.package:
         sys.exit("step_bench: give --package (or set SPLISH_PACKAGE)")
@@ -111,7 +122,7 @@ def main():
         diffs = []
         for n in names:
             means = [st.mean(x[w]["rows"].get(n, 0.0) for x in results[label]) for label, _ in configs]
-            if max(means) - min(means) > 0.05:
+            if max(means) - min(means) > 0.05 or n in args.show.split(","):
                 diffs.append((n, means))
         if diffs:
             print("  attributed ms by pipeline (where configurations differ):")
