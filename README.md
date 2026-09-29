@@ -15,7 +15,11 @@ choices loaded from a file, the copy rule, the benchmark tools) are available up
 
 ## Results
 
-**Qwen3.8-27B (4-bit) on a 40-core M5 Max, Splish v1.1:**
+**Splish v1.1** (September 2026) builds on v1.0 with newly tuned kernel choices: about 4% faster at one request
+on Qwen3.8-27B and 3–6% at 2–4 requests, a further 10–18% at one request on Qwen3.6-35B-A3B, a tuned table for the
+20-core M5 Pro, and fixes for non-Latin tokenization and very thin images ([RESULTS.md](RESULTS.md)).
+
+**Qwen3.8-27B (4-bit) on a 40-core M5 Max** (measured on v1.0; v1.1 is a few percent faster):
 - **Decode:** 91–178 tok/s for one request, depending on the workload; up to ~400 tok/s in total across 4 requests;
   63–109 tok/s for one request as the context grows from 2K to 128K tokens.
 - **Prefill:** ~700–920 tok/s (2K–128K tokens). Splish does not change prefill; it matches Splash.
@@ -30,19 +34,10 @@ across requests):
 | Swift-1.5 (a Qwen3.8-27B fine-tune), long reasoning | 141 → **179** (+27%) | 224 → **296** (+32%) | 224 → **342** (+52%) | 288 → **400** (+39%) |
 | Qwen3.6-35B-A3B, long reasoning | 331 → **348** (+5%) | 486 → **573** (+18%) | 553 → **672** (+22%) | 642 → **754** (+18%) |
 
-*Measured on v1.0. v1.1 adds about 4% at one request on the 27B, 3–6% at 2–4 requests, and a further 10–18% at one
-request on Qwen3.6-35B-A3B; see [RESULTS.md](RESULTS.md).*
+*Measured on v1.0; see above for what v1.1 adds.*
 
 ![Decode by context length](docs/m5/charts/context-decode.svg)
 ![Prefill by context length](docs/m5/charts/context-prefill.svg)
-
-**Where this places Splish:**
-
-| Engine | Decode vs Splish | Prefill vs Splish | Source |
-|---|---|---|---|
-| Splash 1.1.0 | Splish 1.15–1.52x faster | same | measured, this Mac ([RESULTS.md](RESULTS.md)) |
-| oMLX | not yet measured against current oMLX (it added DFlash2 speculative decoding on 24 Sep) | not yet measured | — |
-| MTPLX | not yet measured on Qwen3.8-27B | not yet measured | — |
 
 ## Quality
 
@@ -50,22 +45,6 @@ Splish changes kernels, not the model. In deterministic runs (greedy, thinking o
 (MMLU-Pro, CMMLU, TruthfulQA, GSM8K, HumanEval, MBPP, long context), Splish and stock Splash 1.1.0 scored within
 0.1 points of each other on Swift-1.5: 82.7% vs 82.8%, with 4 items differing (not significant, p = 0.63). Every
 model also passes our 95-task smoke set (95/95).
-
-**Swift-1.5 on Splish at the recommended settings** (thinking on at its default effort, temperature 1.0, top-p 0.95,
-top-k 20), accuracy with 95% intervals:
-
-| Task | Accuracy |
-|---|---:|
-| MMLU-Pro | 72.3% (63.4–80.3) |
-| CMMLU | 93.3% (89.3–96.7) |
-| TruthfulQA MC1 | 89.0% (86.5–91.5) |
-| HumanEval | 99.4% (98.2–100) |
-| MBPP | 91.7% (82.3–98.8) |
-| Long-context retrieval, harder items (4K–15K tokens) | 95.0% |
-
-421 items: every item the greedy run got wrong, plus 1 in 8 of those it got right, weighted back to the full task
-(per-task estimates with bootstrap intervals). Thinking up to ~32K tokens; 5 of 421 answers ran out of room and
-count as wrong. Method and per-item data: [RESULTS.md](RESULTS.md).
 
 ## Quick start
 

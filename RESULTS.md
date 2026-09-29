@@ -5,7 +5,7 @@ C concurrent requests (1–4), long generations, aggregate decode tok/s counted 
 the mean of two rounds with stock and Splish alternating; runs vary by up to ~7%, so **differences under about 5%
 are ties**. Quality: a 95-task set and a 1,621-item benchmark set, both builds.
 
-## v1.1 (October 2026)
+## v1.1 (September 2026)
 
 | Change | Measured |
 |---|---|
@@ -14,7 +14,6 @@ are ties**. Quality: a 95-task set and a 1,621-item benchmark set, both builds.
 | GGUF choices v2 (the DFlash draft tuned) | step time Q8_0 −2.8% / −2.8% / −4.9% / −6.6% at 1–4 requests; Q4_K_M −4.5% / −3.9% at 3–4 |
 | 20-core M5 Pro table (Michael McCrimmons) | step −6.8% at one request, −6.8 to −8.4% at two, on his M5 Pro |
 | Quality | Swift-1.5 on 1,621 items, greedy: stock 82.8%, Splish 82.7% (4 items differ, 1 vs 3; p = 0.63) |
-| Quality at the recommended settings | Swift-1.5, thinking on: MMLU-Pro 72.3%, CMMLU 93.3%, TruthfulQA 89.0%, HumanEval 99.4%, MBPP 91.7%, hard long context 95.0% (421-item weighted sample of the 1,621; every greedy-wrong item + 1 in 8 greedy-right; bootstrap 95% intervals in the README) |
 | Fixes | tokenizer (Hindi, Thai, Arabic samples: 14–53% fewer tokens); very thin images padded instead of rejected |
 
 ## v1.0 (September 2026)
@@ -54,14 +53,14 @@ Splish:
 
 Decode is faster at every length. Prefill is unchanged: Splish does not touch the prefill
 kernels, and these single cold measurements differ by −9% to +8%. Splash's own harness also
-finds time to first token even at 2K and 32K.
+finds time to first token unchanged at 2K and 32K.
 
 ![Decode by context length](docs/m5/charts/context-decode.svg)
 ![Prefill by context length](docs/m5/charts/context-prefill.svg)
 
 **Where it is not faster.** Long-context attention itself is unchanged; the lead at 64K
-comes from everything around it. Qwen3.6-35B at one request gains only 5%, and GGUF models
-about 2%. Energy per token is lower at 3–4 requests, but mixed at 1–2.
+comes from everything around it. Qwen3.6-35B at one request gained only 5% in v1.0 (v1.1's table adds 10–18%), and GGUF
+models about 2%. Energy per token is lower at 3–4 requests, but mixed at 1–2.
 [Where stock is ahead or even](#where-stock-is-ahead-or-even) lists every case.
 
 **Method.**
