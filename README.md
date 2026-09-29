@@ -45,7 +45,7 @@ Quality is unchanged: every model above scores 95/95 on our 95-task set with Spl
 
 One request summarising a document of the given length (a distinct WikiText passage),
 2,048 tokens out. Prompts are prefilled into the cache before decode timing starts. Decode
-is the mean of 2 rounds; prefill is the cold first round. Inco's Qwen3.8-27B, tok/s, stock →
+is the mean of 2 rounds (Splish ahead in all 10 rounds); prefill is the cold first round. Inco's Qwen3.8-27B, tok/s, stock →
 Splish:
 
 | Context | 2K | 8K | 32K | 64K | 128K |
@@ -73,8 +73,8 @@ What the fork adds on top of Splash 1.1.0:
   When the last 16+ tokens repeat earlier context, the next draft is the verbatim
   continuation. Output is exact: greedy text is byte-identical, and sampled acceptance uses a
   one-hot draft distribution.
-- **Faster GGUF decode** (the G4a staged kernel), bit-identical output: +3–14% per kernel,
-  ~2% per step.
+- **Faster GGUF decode** (the G4a staged kernel), bit-identical output: +3–14% per kernel;
+  per step ~2% at 1, 3 and 4 requests on Q8_0 and at 1–3 requests on the K-quants (0.6% at 2).
 - **Tools that keep the numbers honest.** They include a kernel bench checked against fp64, a
   whole-step benchmark with confidence intervals, bit-for-bit build comparison, and a
   steady-state serving benchmark with power readings.
@@ -136,10 +136,10 @@ auto-tuner is [upcoming](#upcoming).
 
 | Model | Choices file | Notes |
 |---|---|---|
-| Qwen3.8-27B family, Splash package (Inco's, Swift-1.5, other fine-tunes) | `tuning/m5max-40c-swift15-v8.choices` | Tuned on a 40-core M5 Max. Other M5 chips: run the tuner (`dev/tuning`). |
-| Qwen3.8-27B GGUF Q8_0 | `tuning/m5max-40c-swift15-q80.choices` | ~2% |
-| Qwen3.6-35B-A3B | `tuning/m5max-40c-qwen36-35b.choices` | +5/+18/+22/+18% at 1–4 requests |
-| Qwen3.8-27B GGUF Q4_K_M, Q6_K | `tuning/m5max-40c-swift15-kquant.choices` | ~2% (the G4a kernel does the work) |
+| Qwen3.8-27B family, Splash package (Inco's, Swift-1.5, other fine-tunes) | `tuning/m5max-40c-swift15-v12.choices` | Tuned on a 40-core M5 Max (v11/v12: kernel lab results, see [What worked](#what-worked)). Other M5 chips: run the tuner (`dev/tuning`). |
+| Qwen3.8-27B GGUF Q8_0 | `tuning/m5max-40c-swift15-q80-v2.choices` | v2 tunes the DFlash draft too: decode step −2.8% / −2.8% / −4.9% / −6.6% at 1–4 requests |
+| Qwen3.6-35B-A3B | `tuning/m5max-40c-qwen36-35b-v2.choices` | v1 (the tuner's set): +5/+18/+22/+18% at 1–4 requests; v2 adds the one-request shapes the tuner left on defaults: a further +10% (greedy) to +18% (steady state) at one request |
+| Qwen3.8-27B GGUF Q4_K_M, Q6_K | `tuning/m5max-40c-swift15-kquant-v2.choices` | v2 tunes the DFlash draft too: Q4_K_M decode step −1.7% to −4.5% at 1–4 requests (the G4a kernel does the rest) |
 
 **Copy rule:** on by default through `./splish` (`SPLASH_M5_COPY_MIN_MATCH=16`). It pays off on
 agents that rewrite files, never triggers on prose, and costs at most ~3% when it misfires.
@@ -164,7 +164,8 @@ behaviour. For long agent sessions, set a fan curve that reaches full speed by 8
   (`dev/m5/serve_bench.py`). Package power and GPU temperature come from `macmon` over the
   same window.
 - **Repeats.** Each value is the mean of two rounds, with stock and fork alternating. Runs
-  vary by up to ~7% (single cells up to 8%), so **differences under about 5% are ties**.
+  vary by up to ~7% (single cells up to 8%), so **differences under about 5% are ties**. On the
+  27B packages the fork was ahead in every round (8 of 8 for each).
 - **Splash's own harness.** `dev/benchmarks/http_regression.py` (ABBA order, `abba.py`'s
   pass rule) measured decode ms per token and time to first token at 2K and 32K context.
 - **Quality.** A 95-task set (maths, code, reasoning, exact-match scoring) on both builds.
@@ -224,12 +225,15 @@ Swift-1.5 (a Qwen3.8-27B fine-tune, same shapes), decode step time from Splash's
 
 ![Swift-1.5 decode step time](docs/m5/charts/swift-step-time.svg)
 
-| Requests | Stock 1.0.2 | 1.0.2 + tuned choices | Splish (v8) |
-|---|---:|---:|---:|
-| 1 | 49.0 ms | 41.5 ms | **40.5 ms** |
-| 2 | 59.1 ms | 59.4 ms | **44.9 ms** |
-| 3 | 87.2 ms | 88.2 ms | **59.3 ms** |
-| 4 | 87.0 ms | 85.8 ms | **62.9 ms** |
+| Requests | Stock 1.0.2 | 1.0.2 + tuned choices | Splish (v8) | Splish (v11) |
+|---|---:|---:|---:|---:|
+| 1 | 49.0 ms | 41.5 ms | 40.5 ms | **39.4 ms** |
+| 2 | 59.1 ms | 59.4 ms | **44.9 ms** | 45.4 ms |
+| 3 | 87.2 ms | 88.2 ms | **59.3 ms** | 59.2 ms |
+| 4 | 87.0 ms | 85.8 ms | **62.9 ms** | 61.8 ms |
+
+v11 was measured on 2026-09-27 against v8 in the same session (v8: 40.9 / 45.5 / 59.1 / 61.5 ms):
+one request −3.7% ±2.3%, two to four unchanged within ±0.5 ms.
 
 At one request the fork adds ~2.5% over tuned choices alone. The gain from the fork's own
 kernels is at 2–4 requests (1.3–1.5×).
@@ -257,7 +261,7 @@ engines are deterministic run to run.
    step 23–32% at 2–4 requests.
 2. **Lighter barriers (H1).** A simdgroup barrier replaces a threadgroup one where a tile
    has one simdgroup.
-3. **Measured choices per shape** (`v8`), loaded from a file.
+3. **Measured choices per shape** (`v8`, now `v11`), loaded from a file.
 4. **GGUF input prefetch (G4a).** The staged GGUF tile now prefetches its input rows a step
    ahead into space freed from its weight stage. It uses the same threadgroup memory,
    produces bit-identical output and is 2–8% faster at 32 rows.
@@ -289,18 +293,69 @@ engines are deterministic run to run.
    saves far more on large rewrites, but it changes the model's output format and needs a
    harness extension. Splish's copy rule keeps the model's exact output and needs nothing from
    the client, for smaller gains. The two can be combined.
+8. **A kernel lab** (`dev/m5/lab/`). Proposals for one projection's kernel are checked against
+   fp64, timed on a quiet GPU, and the best are swapped into the engine and timed inside real
+   decode steps, which is where they have to win. Proposals came from theorist agents (Swift-1.5
+   in DeepSeek Harness, `dsh`) and from Claude. The single-request results
+   below (v11) came out of it; at 2–4 requests nothing changed.
+9. **Four matmuls in flight (`deep256`).** A 256-column tile keeping four quant groups' weight
+   loads and matmuls in flight (two groups of gate/up's two streams): the GDN input projection
+   0.104 → 0.091 ms (+14.7%, ~94% of the bandwidth ceiling), gate/up +3.4%. Eight in flight
+   lost (registers). Bit-identical.
+10. **Row sums read from device memory (DeviceSums).** The one-request split-K kernels copied
+    every row sum (8.7 KB) into threadgroup memory behind a barrier before loading any weight;
+    reading them in the epilogue instead made the down and output projections 5.5% faster in
+    the step. Bit-identical.
+11. **Split-K for every one-request plain projection.** +7.5% to +34% per shape, and the DFlash
+    draft's 1280-wide projections, never tuned (10 threadgroups, ~11% of the bandwidth),
+    2.7× faster.
+12. **The draft's projections at two to four requests (v12).** They also ran untuned defaults, at
+    18–28% of the bandwidth ceiling (3.8–6.0 ms per step); split-K made each 2–5× faster: decode
+    step −4.0% / −5.1% at 2 / 3 requests, serving about +3% to +6% at 2–4 requests. The draft's
+    acceptance is unchanged (5.7–6.1 tokens per step either way).
+13. **Qwen3.6-35B, the shapes its tuning missed (35B v2).** Splash's tuner left nearly every
+    one-request projection on default kernels; its 2048 × 4096 residual projection (40 per step) ran on
+    16 threadgroups at ~15% of the bandwidth ceiling, 3.8× slower than split-K. Decode step −16% at one
+    request; serving +10% (greedy, 95% interval +8% to +12%) to +18% (steady state); quality 95/95. This
+    one changes the target model's summation order, so greedy text can differ at near-ties (2 of 16
+    identical to v1).
+
+   Together (v8 → v11, one request, the same session): decode step 40.9 → 39.4 ms, and
+   **+4.1% tok/s** (95% interval +3.1% to +5.1%), 95/95 quality.
+
+### Output identity
+
+- **Run to run:** identical (greedy and seeded sampling).
+- **Across Splish versions:** greedy output is unchanged, and the target model's arithmetic is
+  bit-identical from v8 to v11. Seeded sampled output can change when a release changes the draft
+  model's kernels, and v11 does: split-K on the draft's 1280-wide projection makes decoding 1.1%
+  faster (95% interval 0.5–1.7%), and 6 of 18 seeded samples differ from v8. Sampled acceptance keeps
+  every token drawn from the target model's distribution, so a seed gives a different, equally valid
+  sample. Regenerate any saved seeded baselines when you upgrade.
+- **Under concurrency:** not reproducible, even on one version. Splish picks the fastest kernel per
+  request count, so a projection may add in a different order with one request than with two to four;
+  how concurrent requests overlap depends on their arrival times, so a request's greedy output can
+  change with its neighbours (measured: the same engine and prompts, 4 at once, matched 3 of 4 runs).
+  Stock Splash keeps outputs identical across batch widths; Splish trades that for speed.
+- **Splish vs stock:** different at near-ties (greedy 4 of 16 identical on Swift-1.5), because the
+  split-K kernels add in a different order. Quality 95/95 on both.
 
 ## What did not
+
 
 | Idea | Result | Why |
 |---|---|---|
 | Epilogue redesigns (bias matmul, early loads, shuffles, cache) | No gain | The 32-row matmul is compute-bound at ~57 TFLOPS. |
 | Kernel fusion | −0.1% | Launch cost is not the gap. |
-| Concurrent encoder | 0.6–2.9% slower | Decode is a dependency chain. |
+| Concurrent encoder | 1.4% / 2.6% slower at 2 / 3 requests; 1 and 4 within noise | Decode is a dependency chain. |
 | Attention: operand swap (A1) | Wrong output | Discarded. |
 | Attention: two pages per step (A2), next-page prefetch (A3) | 0%, −2% | Not latency-bound. |
 | Attention: int8 × int8 QK (A6) | 3–7% slower, 3× the error | The M5 tensor unit is no faster at int8 for this shape. |
 | GGUF: extra threadgroup memory (G1) or registers (G2) for prefetch | 17–35% slower | The tile's occupancy collapses above 8 KB. |
+| Pipeline depth 8 (or 5) instead of 4; depth 4 on 128-column tiles | −9%; −15% | Registers; the gain needs the 256-column tile. |
+| One threadgroup per core; fewer, longer threadgroups (persistent) | −31%; −65% | Too few loads in flight: this GPU needs many resident threadgroups. |
+| Gate/up: loads before sums, sums once, tile order, split streams | Ties in the step | It already runs at ~99% of the ceiling in isolation; the rest is per-dispatch start and drain. |
+| The down projection's row sums written by gate/up (one pass fewer) | No change | Kernel boundaries cost ~2–3 µs each. |
 
 ![Long-context attention probes](docs/m5/charts/attention-probes.svg)
 
@@ -336,7 +391,7 @@ engines are deterministic run to run.
    verification still reads all of it.
 7. **Batch width 8.** Splash caps concurrent decode at 4; a plan for 8 exists but is unbuilt.
 8. **Other GGUF formats.** G4a is measured on Q8_0, Q4_K and Q6_K (bit-identical, +3–14% per
-   kernel, ~2% per step); the IQ and Q2/Q3/Q5 formats are unmeasured.
+   kernel, ~2% per step where it is significant); the IQ and Q2/Q3/Q5 formats are unmeasured.
 9. **Token-agreement check.** Compare next-token choices position by position against
    upstream, as the M1 port does. It is a finer quality gate than a task set.
 10. **Tuning other M5 chips.** The choices files are for a 40-core M5 Max; see [Upcoming](#upcoming).
@@ -355,13 +410,15 @@ Every number above can be re-measured with the tools in [dev/m5/](dev/m5/).
 | `dev/m5/attn_compare.py`, `dev/m5/variant_lib.sh` | A kernel variant (Metal defines) against production, with output agreement |
 | `dev/m5/accept_hist.py`, `dev/m5/copy_rule.py` | Draft acceptance histograms and the copy-rule replay, from the diagnostic logs |
 | `dev/m5/tonight.sh` | The overnight run: serving, quality, harness, 64K, Qwen3.6-35B |
+| `dev/m5/lab/` (`run_rounds.sh`, `tester.py`, `incontext.py`, `retime.py`) | The kernel lab: proposals scored against fp64 and production, then timed inside real decode steps |
+| `dev/m5/seeded_identity.py`, `dev/m5/ab_engines.py` | Output identity between servers (seeded sampling; greedy) and paired tok/s |
 | `build/engine-tests/tune-kernels METALLIB MODEL_ROOT` | Splash's tuner; its winners become a choices file |
 
 ```sh
 make && dev/m5/build.sh
 ./build/m5/kernel-bench build/splash.metallib --check                  # affine Q4, fp64
 ./build/m5/kernel-bench build/splash.metallib --gguf q80 --check       # GGUF Q8_0
-SPLISH_PACKAGE=<model root> python3 dev/m5/step_bench.py base=- new=tuning/m5max-40c-swift15-v8.choices
+SPLISH_PACKAGE=<model root> python3 dev/m5/step_bench.py base=- new=tuning/m5max-40c-swift15-v12.choices
 python3 dev/m5/charts.py                                                # docs/m5/charts
 ```
 
