@@ -58,7 +58,10 @@ enum class LinearEpilogue : uint8_t { None, Residual, GateUp, UpWithGate };
 enum class LinearTile : uint8_t {
   N128, N256, Paired128, Split32, Split64, Paired256, Simdgroup, GgufStaged, GgufRegister,
   // splash-m5: Split32 reading row sums computed once per projection (Linear.cpp).
-  SplitSums32
+  SplitSums32,
+  // splash-m5: one-lane N256, eight simdgroups, ~four matmuls in flight (plain: four
+  // quant groups; gate/up: two groups of two streams).
+  Deep256
 };
 // The GGUF formats Apple9's staged tiles decode faster than its register
 // tiles, dense and MoE: IQ3_XXS, the IQ2 formats and IQ1, whose operands the

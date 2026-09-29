@@ -360,13 +360,14 @@ inline void m5x_split_device_sums(device bfloat *input, device uchar *weights,
                                   uint group, uint lane, uint simd,
                                   threadgroup float *sums, threadgroup float *partials) {
   constexpr uint TileN = 32, Rows = 8;
-  const uint count = p.input_size / 64 * Rows;
-  for (uint i = simd * 32 + lane; i < count; i += Parts * 32) sums[i] = row_sums[i];
-  threadgroup_barrier(mem_flags::mem_threadgroup);
+  // splash-m5 (kernel lab 2, DeviceSums): the epilogue reads the row sums from device memory
+  // instead of a per-threadgroup copy (8.7 KB of threadgroup memory, a barrier before any weight
+  // load); the same floats, so bit-identical. `sums` is unused.
+  (void)sums;
   for (uint tile = group; tile < p.output_size / TileN; tile += p.persistent_groups) {
-    q4_mpp_tile_split<TileN, false, 256, true, 1, Parts, Rows, 2, true, 0, false, Early>(
+    q4_mpp_tile_split<TileN, false, 256, true, 1, Parts, Rows, 2, true, 0, true, Early>(
         input, weights, scales, biases, partials, weights, scales, biases,
-        p.input_size, sums, tile * TileN, lane, 0, simd);
+        p.input_size, sums, tile * TileN, lane, 0, simd, row_sums);
     for (uint i = simd * 32 + lane; i < Rows * TileN; i += Parts * 32) {
       float value = 0;
       for (uint part = 0; part < Parts; ++part) value += partials[part * Rows * TileN + i];
@@ -390,7 +391,7 @@ inline void m5x_split_device_sums(device bfloat *input, device uchar *weights,
                    uint group [[threadgroup_position_in_grid]],                \
                    uint lane [[thread_index_in_simdgroup]],                    \
                    uint simd [[simdgroup_index_in_threadgroup]]) {             \
-    threadgroup float sums[272 * 8], partials[Parts * 8 * 32];                 \
+    threadgroup float sums[1], partials[Parts * 8 * 32];                 \
     m5x_split_device_sums<Parts>(input, weights, scales, biases, residual,     \
                                  output, row_sums, params, group, lane, simd,  \
                                  sums, partials);                              \
@@ -416,7 +417,7 @@ M5X_DEVICE_SUMS(decode_linear_q4_n32_split17_sums_residual, 17)
                    uint group [[threadgroup_position_in_grid]],                \
                    uint lane [[thread_index_in_simdgroup]],                    \
                    uint simd [[simdgroup_index_in_threadgroup]]) {             \
-    threadgroup float sums[272 * 8], partials[Parts * 8 * 32];                 \
+    threadgroup float sums[1], partials[Parts * 8 * 32];                 \
     m5x_split_device_sums<Parts, false, Out>(input, weights, scales, biases,   \
                                              input, output, row_sums, params,  \
                                              group, lane, simd, sums,          \
@@ -797,7 +798,7 @@ M5X_BIAS_MATMUL(m5x_biasmm_n_sums_residual, 4, false)
                    uint group [[threadgroup_position_in_grid]],                \
                    uint lane [[thread_index_in_simdgroup]],                    \
                    uint simd [[simdgroup_index_in_threadgroup]]) {             \
-    threadgroup float sums[272 * 8], partials[Parts * 8 * 32];                 \
+    threadgroup float sums[1], partials[Parts * 8 * 32];                 \
     m5x_split_device_sums<Parts, true, bfloat, true>(input, weights, scales,   \
         biases, residual, output, row_sums, params, group, lane, simd, sums,   \
         partials);                                                             \
@@ -815,7 +816,7 @@ M5X_EARLY_RES(m5x_early_sums_residual, 4)
                    uint group [[threadgroup_position_in_grid]],                \
                    uint lane [[thread_index_in_simdgroup]],                    \
                    uint simd [[simdgroup_index_in_threadgroup]]) {             \
-    threadgroup float sums[272 * 8], partials[Parts * 8 * 32];                 \
+    threadgroup float sums[1], partials[Parts * 8 * 32];                 \
     m5x_split_device_sums<Parts, false, bfloat, true>(input, weights, scales,  \
         biases, input, output, row_sums, params, group, lane, simd, sums,      \
         partials);                                                             \
@@ -834,7 +835,7 @@ M5X_EARLY_PLAIN(m5x_early_sums, 4)
                    uint group [[threadgroup_position_in_grid]],                \
                    uint lane [[thread_index_in_simdgroup]],                    \
                    uint simd [[simdgroup_index_in_threadgroup]]) {             \
-    threadgroup float sums[272 * 8], partials[4 * 8 * 32];                     \
+    threadgroup float sums[1], partials[4 * 8 * 32];                     \
     m5x_split_device_sums<4, Residual, bfloat, 2>(input, weights, scales,      \
         biases, Out4, output, row_sums, params, group, lane, simd, sums,       \
         partials);                                                             \
@@ -848,7 +849,7 @@ kernel void m5x_shuf_sums(device bfloat *input [[buffer(0)]], device uchar *weig
                           uint group [[threadgroup_position_in_grid]],
                           uint lane [[thread_index_in_simdgroup]],
                           uint simd [[simdgroup_index_in_threadgroup]]) {
-  threadgroup float sums[272 * 8], partials[4 * 8 * 32];
+  threadgroup float sums[1], partials[4 * 8 * 32];
   m5x_split_device_sums<4, false, bfloat, 2>(input, weights, scales, biases, input, output, row_sums,
                                              params, group, lane, simd, sums, partials);
 }

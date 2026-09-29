@@ -98,9 +98,13 @@ inline void q4_store_input_sums(device const bfloat *input, uint input_size,
 // logits (ops::Projection::destination), which keeps the sum unrounded.
 // splash-m5: SumsReady (default false) takes input_sums already holding every
 // quant group's row sums, [group][row] for all of K (FORK.md H10/H11).
+// splash-m5: Depth (Pipelined only, default 2) is how many quant groups' weight
+// loads and matmuls are in flight before their epilogues; 4 keeps a wide N256
+// one-lane tile near the bandwidth ceiling (kernel lab). Epilogues
+// still apply in group order, so every Depth is bit-identical.
 template <ushort TileN, bool GateUp, bool AddResidual,
           ushort StorageN = TileN, bool Pipelined = false, ushort Simdgroups = 8,
-          bool SumsReady = false, class Out>
+          bool SumsReady = false, ushort Depth = 2, class Out>
 inline void q4_mpp_tile(device bfloat *input, device uchar *weights_0,
                         device bfloat *scales_0, device bfloat *biases_0,
                         device Out *output_0, device uchar *weights_1,
@@ -198,7 +202,27 @@ inline void q4_mpp_tile(device bfloat *input, device uchar *weights_0,
       threadgroup_barrier(mem_flags::mem_threadgroup);
     }
   };
-  if constexpr (Pipelined) {
+  if constexpr (Pipelined && Depth == 4) {
+    uint quant_group = 0;
+    for (; quant_group + 3 < quant_groups; quant_group += 4) {
+      decltype(accumulated_0) p0, p1, p2, p3;
+      decltype(accumulated_1) q0, q1, q2, q3;
+      run_group(quant_group, p0, q0);
+      run_group(quant_group + 1, p1, q1);
+      run_group(quant_group + 2, p2, q2);
+      run_group(quant_group + 3, p3, q3);
+      finish_group(quant_group, p0, q0);
+      finish_group(quant_group + 1, p1, q1);
+      finish_group(quant_group + 2, p2, q2);
+      finish_group(quant_group + 3, p3, q3);
+    }
+    for (; quant_group < quant_groups; ++quant_group) {
+      decltype(accumulated_0) partial_0;
+      decltype(accumulated_1) partial_1;
+      run_group(quant_group, partial_0, partial_1);
+      finish_group(quant_group, partial_0, partial_1);
+    }
+  } else if constexpr (Pipelined) {
     uint quant_group = 0;
     for (; quant_group + 1 < quant_groups; quant_group += 2) {
       decltype(accumulated_0) first_0, second_0;

@@ -55,18 +55,18 @@ bool widerSplit(LinearWorkload w, LinearConfig config) noexcept {
 // LinearScratch::sums ([group][row]), instead of every threadgroup recomputing
 // them from the whole input (FORK.md, H10).
 bool sumsSplit(LinearWorkload w) noexcept {
-  // One lane copies all-K sums into threadgroup memory (K <= 17408); two to
-  // four lanes read them from device memory (H12).
+  // Every lane count reads the sums from device memory (H12; one lane since kernel lab 2's
+  // DeviceSums), so K is not bounded by threadgroup memory. Plain projections at one lane too
+  // (kernel lab 2: the draft's plain projections and attention q/k/v gained).
   return w.phase == LinearPhase::Decode && w.weightLayout == WeightLayout::Affine64 &&
       (w.rows == 8 || w.rows == 16 || w.rows == 24 || w.rows == 32) &&
-      (w.epilogue == LinearEpilogue::Residual ||
-       ((w.epilogue == LinearEpilogue::None ||                 // H13: plain at two to four lanes
-         w.epilogue == LinearEpilogue::GateUp) && w.rows > 8)) &&  // H14: two-pass gate/up
-      w.matrix.inputSize % kSplitInputBlock == 0 &&
-      (w.rows != 8 || w.matrix.inputSize / kQuantGroup <= 272);
+      (w.epilogue == LinearEpilogue::Residual || w.epilogue == LinearEpilogue::None ||  // H13
+       (w.epilogue == LinearEpilogue::GateUp && w.rows > 8)) &&                        // H14: two-pass gate/up
+      w.matrix.inputSize % kSplitInputBlock == 0;
 }
 bool oneLaneTile(LinearTile tile) noexcept {
-  return tile == LinearTile::Paired128 || tile == LinearTile::Paired256 || splitTile(tile);
+  return tile == LinearTile::Paired128 || tile == LinearTile::Paired256 ||
+      tile == LinearTile::Deep256 || splitTile(tile);
 }
 // Simdgroups fixed by the kernel instance: split tiles run four partitions of
 // one (N32) or two (N64) simdgroups; the paired N256 tile runs four.
@@ -76,7 +76,8 @@ std::optional<LinearSimdgroups> fixedSimdgroups(LinearTile tile) noexcept {
   case LinearTile::SplitSums32:
   case LinearTile::Simdgroup:
   case LinearTile::Paired256: return LinearSimdgroups::Four;
-  case LinearTile::Split64: return LinearSimdgroups::Eight;
+  case LinearTile::Split64:
+  case LinearTile::Deep256: return LinearSimdgroups::Eight;
   case LinearTile::N128:
   case LinearTile::N256:
   case LinearTile::Paired128:
@@ -175,7 +176,8 @@ uint32_t LinearPlan::tileColumns() const noexcept {
   case LinearTile::GgufStaged:
   case LinearTile::GgufRegister: return 64;
   case LinearTile::N256:
-  case LinearTile::Paired256: return 256;
+  case LinearTile::Paired256:
+  case LinearTile::Deep256: return 256;
   case LinearTile::N128:
   case LinearTile::Paired128: return 128;
   }
@@ -309,7 +311,7 @@ LinearPlan::LinearPlan(LinearWorkload w, LinearConfig config, FloatOutput destin
         config.groups != w.matrix.outputSize / tileColumns())
       throw std::invalid_argument("split Q4 tile requires K % 1024 == 0 and the full grid");
     if (config.tile == LinearTile::SplitSums32) {
-      if (!sumsSplit(w)) throw std::invalid_argument("SplitSums32 takes one-lane residual projections, K <= 17408");
+      if (!sumsSplit(w)) throw std::invalid_argument("SplitSums32 takes residual or plain decode projections");
       // 24 partitions exceed 32 KiB of threadgroup memory next to all-K sums.
       if (config.splits == 24) throw std::invalid_argument("SplitSums32 supports 4, 8 or 17 partitions");
       if (lane != 0) {
@@ -333,6 +335,12 @@ LinearPlan::LinearPlan(LinearWorkload w, LinearConfig config, FloatOutput destin
         // multiplies by SiLU of it; both read one row-sums pass.
         if (w.epilogue == LinearEpilogue::GateUp)
           secondPipeline_ = isFour ? fourSilu[lane - 1] : eightSilu[lane - 1];
+        return;
+      }
+      // splash-m5: one-lane plain projections run the four-partition plain kernel.
+      if (!residual) {
+        if (config.splits != 1) throw std::invalid_argument("one-lane plain SplitSums32 runs four partitions");
+        pipeline_ = "decode_linear_q4_n32_split4_sums";
         return;
       }
       pipeline_ = config.splits == 8 ? "decode_linear_q4_n32_split8_sums_residual"
@@ -374,6 +382,14 @@ LinearPlan::LinearPlan(LinearWorkload w, LinearConfig config, FloatOutput destin
   }
   if (config.tile == LinearTile::Paired256) {
     pipeline_ = "decode_linear_q4_n256_paired_sg4";
+    return;
+  }
+  // splash-m5: Deep256 keeps about four matmuls in flight: four quant groups of a
+  // plain projection, or two of gate/up's two streams.
+  if (config.tile == LinearTile::Deep256) {
+    if (w.epilogue == LinearEpilogue::Residual) throw std::invalid_argument("Deep256 takes plain or gate/up projections");
+    pipeline_ = w.epilogue == LinearEpilogue::GateUp ? "decode_linear_q4_n256_gate_up_deep"
+                                                     : "decode_linear_q4_n256_deep4";
     return;
   }
   if (four) {
@@ -689,7 +705,8 @@ std::vector<LinearPlan> Linear::candidates(LinearWorkload w) const {
     append({LinearTile::SplitSums32, w.matrix.outputSize / 32, LinearSimdgroups::Four});
     append({LinearTile::SplitSums32, w.matrix.outputSize / 32, LinearSimdgroups::Eight});
   }
-  if (sumsSplit(w) && w.rows == SPLASH_TARGET_VERIFY_ROWS)
+  // One-lane plain SplitSums32 is chosen by choices file (the candidate cap).
+  if (sumsSplit(w) && w.rows == SPLASH_TARGET_VERIFY_ROWS && w.epilogue == LinearEpilogue::Residual)
     for (const uint32_t splits : {1u, 8u, 17u}) {
       const LinearConfig c{LinearTile::SplitSums32, w.matrix.outputSize / 32, LinearSimdgroups::Four, splits};
       if (splits == 1 || widerSplit(w, c)) append(c);

@@ -123,6 +123,7 @@ std::string_view name(LinearTile tile) {
     ENUMERATOR_NAME(LinearTile::GgufStaged);
     ENUMERATOR_NAME(LinearTile::GgufRegister);
     ENUMERATOR_NAME(LinearTile::SplitSums32);
+    ENUMERATOR_NAME(LinearTile::Deep256);
   }
   unnamed();
 }

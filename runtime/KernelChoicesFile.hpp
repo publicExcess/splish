@@ -48,7 +48,7 @@ inline ops::OperatorChoices loadKernelChoices(const std::string &path) {
       {"n128", LinearTile::N128}, {"n256", LinearTile::N256},
       {"paired128", LinearTile::Paired128}, {"split32", LinearTile::Split32},
       {"split64", LinearTile::Split64}, {"paired256", LinearTile::Paired256},
-      {"simdgroup", LinearTile::Simdgroup}, {"splitsums32", LinearTile::SplitSums32},
+      {"simdgroup", LinearTile::Simdgroup}, {"splitsums32", LinearTile::SplitSums32}, {"deep256", LinearTile::Deep256},
       {"ggufstaged", LinearTile::GgufStaged}, {"ggufregister", LinearTile::GgufRegister}};
 
   std::ifstream file(path);

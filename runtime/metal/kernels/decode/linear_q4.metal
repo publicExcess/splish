@@ -92,11 +92,19 @@ Q4_DECODE_AFFINE(decode_linear_q4_n128_paired,
 // wide one-lane projections, with half the input re-reads of N128 tiles.
 Q4_DECODE_AFFINE(decode_linear_q4_n256_paired_sg4,
                  (q4_mpp_tile<256, false, false, 256, true, 4>), 64, 256)
+// splash-m5: eight simdgroups, four quant groups in flight (Deep256, kernel lab):
+// the wide one-lane plain projections near the bandwidth ceiling.
+Q4_DECODE_AFFINE(decode_linear_q4_n256_deep4,
+                 (q4_mpp_tile<256, false, false, 256, true, 8, false, 4>), 64, 256)
 Q4_DECODE_AUXILIARY(decode_linear_q4_n128_residual_paired, residual,
                     (q4_mpp_tile<128, false, true, 256, true>), 64, 128)
 Q4_DECODE_AUXILIARY(decode_linear_q4_n128_residual, residual,
                     (q4_mpp_tile<128, false, true, 256>), 64, 128)
 Q4_DECODE_GATE_UP(decode_linear_q4_n256_gate_up, (q4_mpp_tile<256, true, false>), 64, 256)
+// splash-m5 (Deep256): gate/up already runs two matmuls per quant group, so
+// pipelining two groups keeps four in flight, as Depth 4 does for a plain tile.
+Q4_DECODE_GATE_UP(decode_linear_q4_n256_gate_up_deep,
+                  (q4_mpp_tile<256, true, false, 256, true>), 64, 256)
 Q4_DECODE_AUXILIARY(decode_linear_q4_n128_residual_m16, residual,
                     (q4_mpp_tile_batched<16, 128, false, true, 256>), 128, 128)
 Q4_DECODE_AUXILIARY(decode_linear_q4_n128_residual_m24, residual,
