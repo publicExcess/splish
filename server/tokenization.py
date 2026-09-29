@@ -1,10 +1,42 @@
 """Bounded token reuse at literal chat-message boundaries."""
 
 import json
+import os
 import sys
 import threading
 from array import array
 from collections import OrderedDict
+
+
+def restore_pretokenizer(tokenizer, source):
+    """Put back the pre-tokenizer of the package's own tokenizer.json.
+
+    transformers' Qwen2Tokenizer rebuilds the pre-tokenizer from Qwen2's split pattern, which lacks the combining-mark
+    class (\\p{M}) of the Qwen3.x tokenizer.json: Hindi, Thai and vowelled Arabic then split into more tokens than the
+    model was trained on (e.g. 33 instead of 21 for a Hindi sentence). Returns True if it changed anything.
+    """
+    backend = getattr(tokenizer, "backend_tokenizer", None)
+    if backend is None:
+        return False
+    path = os.path.join(source, "tokenizer.json")
+    if not os.path.isfile(path):
+        try:
+            from huggingface_hub import try_to_load_from_cache
+
+            cached = try_to_load_from_cache(source, "tokenizer.json")
+        except Exception:
+            cached = None
+        if not isinstance(cached, str) or not os.path.isfile(cached):
+            return False
+        path = cached
+    from tokenizers import Tokenizer
+
+    trained = Tokenizer.from_file(path).pre_tokenizer
+    current = backend.pre_tokenizer
+    if trained is None or (current is not None and trained.__getstate__() == current.__getstate__()):
+        return False
+    backend.pre_tokenizer = trained
+    return True
 
 
 class PromptTokenizer:
