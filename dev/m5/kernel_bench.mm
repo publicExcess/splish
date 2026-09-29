@@ -321,7 +321,8 @@ int run(const std::string &metallib, const Options &options) {
         if (gated) gs.push_back(makeWeights(backend, matrix, 177 + c));
       }
     }
-    const uint32_t maxRows = *std::max_element(options.rows.begin(), options.rows.end());
+    // Buffers hold the plans' storage rows: staged GGUF plans pad 24 rows to 32, as the engine sizes them.
+    const uint32_t maxRows = (*std::max_element(options.rows.begin(), options.rows.end()) + 31) / 32 * 32;
     Buffers b;
     b.input = backend.allocateBuffer(2ULL * maxRows * shape.k);
     b.output = backend.allocateBuffer(2ULL * maxRows * shape.n);
