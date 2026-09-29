@@ -7,7 +7,7 @@ for each configuration (ABAB... over --rounds), and reports for every batch widt
   fused   the real, one-command GPU time of a DFlash decode cycle (the serving path)
   parts   the sum of the same dispatches replayed one per command
   overlap parts - fused: what the fused command gains from kernel overlap at
-          boundaries (thesis: large threadgroups lose it; FORK.md)
+          boundaries (thesis: large threadgroups lose it)
 
 plus paired differences against the first configuration with a 95% interval, and
 per-pipeline attributed time for pipelines that differ. A configuration is

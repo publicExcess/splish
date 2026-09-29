@@ -1,6 +1,6 @@
 # m5max-40c-swift15-v5.choices with the two-to-four-lane residual projections on
-# SplitSums32 too: row sums once per projection, read from device memory (FORK.md
-# H12; kernel +73-109%).
+# SplitSums32 too: row sums once per projection, read from device memory
+# (H12; kernel +73-109%).
 # out   in     rows phase   epilogue  tile     groups simdgroups
 256     5120   8    decode  none      split64  4      8
 5120    4096   8    decode  none      split32  160    4

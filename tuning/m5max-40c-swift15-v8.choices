@@ -1,5 +1,5 @@
 # m5max-40c-swift15-v7.choices (GDN-in and attention qkv at 2-4 lanes on SplitSums32)
-# plus the two-pass FFN gate/up at 3-4 lanes on SplitSums32 (FORK.md H14): one row-sums
+# plus the two-pass FFN gate/up at 3-4 lanes on SplitSums32 (H14): one row-sums
 # pass, the gate pass, then up x SiLU(gate).
 # out   in     rows phase   epilogue  tile     groups simdgroups
 256     5120   8    decode  none      split64  4      8

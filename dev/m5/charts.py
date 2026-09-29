@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Splish (splash-m5) write-up charts: dependency-free SVG bar charts into docs/m5/charts/.
 
-The data below is copied from FORK.md (every number has its measurement there). Charts
+The data below is copied from our measurement log (every number was measured there). Charts
 follow GitHub's light or dark theme through prefers-color-scheme inside the SVG.
 
   python3 dev/m5/charts.py

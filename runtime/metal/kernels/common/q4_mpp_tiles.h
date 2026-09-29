@@ -97,7 +97,7 @@ inline void q4_store_input_sums(device const bfloat *input, uint input_size,
 // The destination's type Out is bf16, or fp32 for a plain projection's
 // logits (ops::Projection::destination), which keeps the sum unrounded.
 // splash-m5: SumsReady (default false) takes input_sums already holding every
-// quant group's row sums, [group][row] for all of K (FORK.md H10/H11).
+// quant group's row sums, [group][row] for all of K (H10/H11).
 // splash-m5: Depth (Pipelined only, default 2) is how many quant groups' weight
 // loads and matmuls are in flight before their epilogues; 4 keeps a wide N256
 // one-lane tile near the bandwidth ceiling (kernel lab). Epilogues

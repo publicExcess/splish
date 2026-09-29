@@ -1,5 +1,5 @@
 # 2026-09-26: rows-24 split32 lines moved from 4 to 8 simdgroups (the one-simdgroup form
-# is no longer planned at 24/32 rows; FORK.md). Results recorded above used the 4 form.
+# is no longer planned at 24/32 rows). Results recorded above used the 4 form.
 # m5max-40c-swift15-multilane.choices plus the one-lane residual projections on wider
 # splits (splits = K partitions: 17 for FFN down, 24 for GDN/attention out; 2026-09-26
 # kernel bench +5-10% per projection). Two-to-four-lane rows as in the multilane file.

@@ -1,7 +1,7 @@
 # 2026-09-26: rows-24 split32 lines moved from 4 to 8 simdgroups (the one-simdgroup form
-# is no longer planned at 24/32 rows; FORK.md). Results recorded above used the 4 form.
+# is no longer planned at 24/32 rows). Results recorded above used the 4 form.
 # m5max-40c-swift15-multilane.choices with the one-lane residual projections (FFN down;
-# GDN/attention out) on SplitSums32: row sums once per projection (FORK.md H10;
+# GDN/attention out) on SplitSums32: row sums once per projection (H10;
 # kernel +26% / +19%). Two-to-four-lane rows as in the multilane file.
 # plain projections keep their defaults.
 #
