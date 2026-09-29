@@ -87,7 +87,7 @@ class PrepareTest(unittest.TestCase):
         with self.assertRaises(images.ImageError):
             images.prepare(b"not an image", images.MAX_PIXELS)
 
-    def test_source_limit_and_aspect_ratio_are_checked_before_decode(self):
+    def test_source_limit_is_checked_before_decode_and_thin_strips_are_padded(self):
         from PIL import Image
 
         normal = png_bytes(64, 64)
@@ -99,10 +99,12 @@ class PrepareTest(unittest.TestCase):
                 with self.assertRaisesRegex(images.ImageError, "source image exceeds"):
                     images.prepare(normal)
                 convert.assert_not_called()
-        with mock.patch.object(Image.Image, "convert") as convert:
-            with self.assertRaisesRegex(images.ImageError, "aspect ratio"):
-                images.prepare(wide)
-            convert.assert_not_called()
+        # splash-m5: a strip beyond 200:1 is centred on white up to the guard instead of
+        # rejected (a rejected image stays in a client's history and fails every later turn).
+        self.assertGreater(images.prepare(wide).tokens, 0)
+        self.assertGreater(images.prepare(png_bytes(8192, 17)).tokens, 0)
+        with self.assertRaisesRegex(images.ImageError, "aspect ratio"):
+            images.smart_resize(1, 201, images.MAX_PIXELS)
 
     def test_exif_orientation_is_applied_before_resizing(self):
         from PIL import Image

@@ -19,6 +19,9 @@ MERGE = 2
 FACTOR = PATCH * MERGE
 # Qwen3-VL's shortest_edge floor; the serving cap below is far below the model's.
 MIN_PIXELS = 65_536
+# Qwen2-VL's smart-resize guard. prepare() pads narrower images up to it instead of
+# rejecting them: a rejected image stays in a client's history and fails every later turn.
+MAX_ASPECT = 200
 # Serving default: the engine's vision scratch covers 16,384 patches.
 MAX_PIXELS = 4_194_304
 # Bound codec work before full-resolution decode, independently of the model's
@@ -75,8 +78,8 @@ def smart_resize(height: int, width: int, max_pixels: int) -> tuple[int, int]:
         raise ImageError("image dimensions must be positive")
     if not MIN_PIXELS <= max_pixels <= MAX_PIXELS:
         raise ImageError("invalid image pixel budget")
-    if max(height, width) / min(height, width) > 200:
-        raise ImageError("absolute aspect ratio must be smaller than 200")
+    if max(height, width) / min(height, width) > MAX_ASPECT:
+        raise ImageError(f"absolute aspect ratio must be smaller than {MAX_ASPECT}")
     h_bar = round(height / FACTOR) * FACTOR
     w_bar = round(width / FACTOR) * FACTOR
     if h_bar * w_bar > max_pixels:
@@ -105,16 +108,14 @@ def prepare(payload: bytes, max_pixels: int = MAX_PIXELS) -> PreparedImage:
         with Image.open(io.BytesIO(payload), formats=IMAGE_FORMATS) as decoded:
             if decoded.height * decoded.width > MAX_SOURCE_PIXELS:
                 raise ImageError("source image exceeds the pixel limit")
-            stored = decoded.size
-            height, width = smart_resize(decoded.height, decoded.width, max_pixels)
+            if decoded.height <= 0 or decoded.width <= 0:
+                raise ImageError("image dimensions must be positive")
             try:
                 # Cameras store the sensor's orientation and an EXIF tag that
                 # turns it upright for display; show the model the upright one.
                 ImageOps.exif_transpose(decoded, in_place=True)
             except Exception:
                 pass  # A malformed tag leaves the stored orientation.
-            if decoded.size != stored:
-                height, width = width, height
             if decoded.has_transparency_data:
                 # Composite onto white as Qwen's preprocessing does: transparent
                 # pixels usually store black, which hides dark content.
@@ -123,6 +124,16 @@ def prepare(payload: bytes, max_pixels: int = MAX_PIXELS) -> PreparedImage:
                 image.paste(rgba, mask=rgba)
             else:
                 image = decoded.convert("RGB")
+            long_side, short_side = max(image.size), min(image.size)
+            if long_side > MAX_ASPECT * short_side:
+                # A thin strip (e.g. an accidental 8192 x 17 selection): centre it
+                # on white, as Qwen composites transparency, so it stays usable.
+                padded = -(-long_side // MAX_ASPECT)
+                size = (image.width, padded) if image.width >= image.height else (padded, image.height)
+                canvas = Image.new("RGB", size, (255, 255, 255))
+                canvas.paste(image, ((size[0] - image.width) // 2, (size[1] - image.height) // 2))
+                image = canvas
+            height, width = smart_resize(image.height, image.width, max_pixels)
             if (image.height, image.width) != (height, width):
                 image = image.resize((width, height), Image.Resampling.BICUBIC)
             pixels = image.tobytes()
