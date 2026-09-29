@@ -1,0 +1,40 @@
+# m5max-40c-swift15-q80-v2.choices: v1 (below) plus the DFlash draft's affine projections at 1-4 lanes
+# from m5max-40c-swift15-v12.choices (every GGUF model runs Inco's affine DFlash2 draft; v1 left it on
+# defaults). Affine lines key affine workloads only, so the GGUF target is unchanged.
+# splash-m5: GGUF Q8_0 (Swift-1.5 Q8 assembly) decode choices, M5 Max 40 cores.
+# Measured with dev/m5/kernel-bench --gguf q80 --candidates (fp64-checked); only
+# shapes where a candidate beat the planner's split rule in two repeat runs.
+# out  in    rows phase  epilogue tile         groups simdgroups splits
+14336  5120  8    decode none     ggufregister 224    4          2   # qkv +15%
+14336  5120  16   decode none     ggufstaged   224    2          1   # qkv +8%
+14336  5120  24   decode none     ggufstaged   224    2          1   # qkv +9%
+14336  5120  32   decode none     ggufstaged   224    2          1   # qkv +9%
+5120   6144  8    decode residual ggufregister 80     4          2   # gdn_out +4%
+5120   17408 8    decode residual ggufregister 80     4          2   # down +2%
+256     5120   8    decode  none      splitsums32 8   4
+1280    5120   8    decode  none      splitsums32 40   4
+5120    4096   8    decode  none      splitsums32 160  4
+5120    17408  8    decode  none      splitsums32 160  4
+5120    25600  8    decode  none      splitsums32 160  4
+6144    5120   8    decode  none      splitsums32 192  4
+17408   5120   8    decode  gateup    deep256  68     8
+17408   5120   24   decode  gateup    splitsums32 544  4
+17408   5120   32   decode  gateup    splitsums32 544  8
+1280    5120   16   decode  none      splitsums32 40   8
+6144    5120   16   decode  none      splitsums32 192  8
+5120    4096   16   decode  none      splitsums32 160  4
+5120    17408  16   decode  none      splitsums32 160  4
+5120    25600  16   decode  none      splitsums32 160  4
+256     5120   16   decode  none      splitsums32 8    8
+1280    5120   24   decode  none      splitsums32 40   4
+6144    5120   24   decode  none      splitsums32 192  4
+5120    4096   24   decode  none      splitsums32 160  4
+5120    17408  24   decode  none      splitsums32 160  4
+5120    25600  24   decode  none      splitsums32 160  4
+256     5120   24   decode  none      splitsums32 8    4
+1280    5120   32   decode  none      splitsums32 40   8
+6144    5120   32   decode  none      splitsums32 192  4
+5120    4096   32   decode  none      splitsums32 160  4
+5120    17408  32   decode  none      splitsums32 160  4
+5120    25600  32   decode  none      splitsums32 160  4
+256     5120   32   decode  none      splitsums32 8    8

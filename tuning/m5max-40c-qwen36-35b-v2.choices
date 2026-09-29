@@ -1,0 +1,50 @@
+# m5max-40c-qwen36-35b-v2.choices: the tune-kernels set (v1, below) plus the shapes it left on
+# default kernels, measured with kernel-bench on 2026-09-27: every one-lane projection except the
+# 12544-wide (default best) on split-K (the 2048 x 4096 residual 3.8x with 8 partitions), and the
+# 2-4-lane holdouts (12544/16, 256/16, 512/24-32, 2048 x 6144/32).
+# splash-m5: tune-kernels winners for Qwen3.6-35B-A3B (incoai package), M5 Max 40 cores,
+# 2026-09-27. Confirmed on complete graphs: decode B1 +2.2%, B2 +16.4%, B3 +16.4%, B4 +14.1%.
+# out   in     rows phase   epilogue tile  groups simdgroups splits
+256     2048   24   decode  none     splitsums32 8      4 1
+256     2048   32   decode  none     splitsums32 8      8 1
+512     2048   16   decode  none     splitsums32 16     8 1
+2048    4096   16   decode  none     splitsums32 64     8 1
+2048    4096   16   decode  residual splitsums32 64     8 1
+2048    4096   24   decode  none     splitsums32 64     4 1
+2048    4096   24   decode  residual splitsums32 64     4 1
+2048    4096   32   decode  none     splitsums32 64     8 1
+2048    4096   32   decode  residual splitsums32 64     8 1
+2048    4096   64   prefill residual n128        0      8 1
+2048    6144   16   decode  none     splitsums32 64     8 1
+2048    6144   24   decode  none     splitsums32 64     4 1
+2048    16384  16   decode  none     splitsums32 64     8 1
+2048    16384  24   decode  none     splitsums32 64     4 1
+2048    16384  32   decode  none     splitsums32 64     8 1
+2048    16384  64   prefill none     n128        0      8 1
+6144    2048   16   decode  none     splitsums32 192    4 1
+6144    2048   24   decode  none     splitsums32 192    4 1
+6144    2048   24   decode  gateup   splitsums32 192    4 1
+6144    2048   32   decode  none     splitsums32 192    8 1
+6144    2048   32   decode  gateup   splitsums32 192    4 1
+9216    2048   16   decode  none     splitsums32 288    4 1
+9216    2048   24   decode  none     splitsums32 288    4 1
+9216    2048   32   decode  none     splitsums32 288    8 1
+12544   2048   24   decode  none     splitsums32 392    4 1
+12544   2048   32   decode  none     splitsums32 392    8 1
+248320  2048   16   decode  none     splitsums32 7760   4 1
+248320  2048   24   decode  none     splitsums32 7760   4 1
+248320  2048   32   decode  none     splitsums32 7760   4 1
+2048    4096   8    decode  residual splitsums32 64     4 8
+2048    4096   8    decode  none     splitsums32 64     4 1
+2048    6144   8    decode  none     splitsums32 64     4 1
+2048    16384  8    decode  none     splitsums32 64     4 1
+256     2048   8    decode  none     splitsums32 8      4 1
+512     2048   8    decode  none     splitsums32 16     4 1
+6144    2048   8    decode  none     splitsums32 192    4 1
+9216    2048   8    decode  none     splitsums32 288    4 1
+6144    2048   8    decode  gateup   split32     192    4 1
+12544   2048   16   decode  none     splitsums32 392    8 1
+256     2048   16   decode  none     splitsums32 8      8 1
+512     2048   24   decode  none     splitsums32 16     4 1
+512     2048   32   decode  none     splitsums32 16     8 1
+2048    6144   32   decode  none     splitsums32 64     8 1

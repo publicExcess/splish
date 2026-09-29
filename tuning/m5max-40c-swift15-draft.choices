@@ -1,0 +1,31 @@
+# m5max-40c-swift15-draft.choices: only the DFlash draft's affine projections at 1-4 lanes (from
+# m5max-40c-swift15-v12.choices). For GGUF models with no choices file of their own (Q2/Q3_K, IQ
+# quants, ...): every GGUF assembly runs Inco's affine DFlash2 draft, and affine lines key affine
+# workloads only, so the GGUF target keeps Splash's defaults.
+256     5120   8    decode  none      splitsums32 8   4
+1280    5120   8    decode  none      splitsums32 40   4
+5120    4096   8    decode  none      splitsums32 160  4
+5120    17408  8    decode  none      splitsums32 160  4
+5120    25600  8    decode  none      splitsums32 160  4
+6144    5120   8    decode  none      splitsums32 192  4
+17408   5120   8    decode  gateup    deep256  68     8
+17408   5120   24   decode  gateup    splitsums32 544  4
+17408   5120   32   decode  gateup    splitsums32 544  8
+1280    5120   16   decode  none      splitsums32 40   8
+6144    5120   16   decode  none      splitsums32 192  8
+5120    4096   16   decode  none      splitsums32 160  4
+5120    17408  16   decode  none      splitsums32 160  4
+5120    25600  16   decode  none      splitsums32 160  4
+256     5120   16   decode  none      splitsums32 8    8
+1280    5120   24   decode  none      splitsums32 40   4
+6144    5120   24   decode  none      splitsums32 192  4
+5120    4096   24   decode  none      splitsums32 160  4
+5120    17408  24   decode  none      splitsums32 160  4
+5120    25600  24   decode  none      splitsums32 160  4
+256     5120   24   decode  none      splitsums32 8    4
+1280    5120   32   decode  none      splitsums32 40   8
+6144    5120   32   decode  none      splitsums32 192  4
+5120    4096   32   decode  none      splitsums32 160  4
+5120    17408  32   decode  none      splitsums32 160  4
+5120    25600  32   decode  none      splitsums32 160  4
+256     5120   32   decode  none      splitsums32 8    8

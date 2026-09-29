@@ -1,0 +1,53 @@
+# m5max-40c-swift15-v12.choices: v9 with every one-lane plain projection on SplitSums32 (DeviceSums,
+# kernel lab 2), including the DFlash draft's 1280 x 5120 dynamic projections, untuned before.
+# (v9: the one-lane GDN in-projection and FFN gate/up on Deep256.)
+# v12: the DFlash draft's plain projections at two to four lanes (16-32 rows) on SplitSums32
+# (they ran untuned defaults at 18-28% of the bandwidth ceiling).
+# m5max-40c-swift15-v7.choices (GDN-in and attention qkv at 2-4 lanes on SplitSums32)
+# plus the two-pass FFN gate/up at 3-4 lanes on SplitSums32 (H14): one row-sums
+# pass, the gate pass, then up x SiLU(gate).
+# out   in     rows phase   epilogue  tile     groups simdgroups
+256     5120   8    decode  none      splitsums32 8   4
+1280    5120   8    decode  none      splitsums32 40   4
+5120    4096   8    decode  none      splitsums32 160  4
+5120    6144   8    decode  residual  splitsums32 160  4
+5120    17408  8    decode  none      splitsums32 160  4
+5120    17408  8    decode  residual  splitsums32 160  4
+5120    25600  8    decode  none      splitsums32 160  4
+6144    5120   8    decode  none      splitsums32 192  4
+6144    5120   256  prefill none      n256     0      8
+14336   5120   8    decode  none      splitsums32 448  4
+16640   5120   8    decode  none      deep256  65     8
+17408   5120   8    decode  gateup    deep256  68     8
+5120    17408  16   decode  residual  splitsums32 160  4
+5120    17408  24   decode  residual  splitsums32 160  4
+5120    17408  32   decode  residual  splitsums32 160  4
+5120    6144   16   decode  residual  splitsums32 160  4
+5120    6144   24   decode  residual  splitsums32 160  4
+5120    6144   32   decode  residual  splitsums32 160  4
+16640   5120   16   decode  none      splitsums32 520  4
+16640   5120   24   decode  none      splitsums32 520  4
+16640   5120   32   decode  none      splitsums32 520  8
+14336   5120   16   decode  none      splitsums32 448  4
+14336   5120   24   decode  none      splitsums32 448  4
+14336   5120   32   decode  none      splitsums32 448  8
+17408   5120   24   decode  gateup    splitsums32 544  4
+17408   5120   32   decode  gateup    splitsums32 544  8
+1280    5120   16   decode  none      splitsums32 40   8
+6144    5120   16   decode  none      splitsums32 192  8
+5120    4096   16   decode  none      splitsums32 160  4
+5120    17408  16   decode  none      splitsums32 160  4
+5120    25600  16   decode  none      splitsums32 160  4
+256     5120   16   decode  none      splitsums32 8    8
+1280    5120   24   decode  none      splitsums32 40   4
+6144    5120   24   decode  none      splitsums32 192  4
+5120    4096   24   decode  none      splitsums32 160  4
+5120    17408  24   decode  none      splitsums32 160  4
+5120    25600  24   decode  none      splitsums32 160  4
+256     5120   24   decode  none      splitsums32 8    4
+1280    5120   32   decode  none      splitsums32 40   8
+6144    5120   32   decode  none      splitsums32 192  4
+5120    4096   32   decode  none      splitsums32 160  4
+5120    17408  32   decode  none      splitsums32 160  4
+5120    25600  32   decode  none      splitsums32 160  4
+256     5120   32   decode  none      splitsums32 8    8
