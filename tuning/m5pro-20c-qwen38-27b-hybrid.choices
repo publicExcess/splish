@@ -1,0 +1,29 @@
+# m5pro-20c-qwen38-27b-hybrid.choices: Qwen3.8-27B Splash packages on a 20-core M5 Pro (48 GB, macOS 27.2).
+# Rows 8/16 (1-2 requests): this Mac's tune-kernels winners. Rows 24/32 (3-4 requests): the decode entries
+# of m5max-40c-swift15-v8.choices; this Mac's own winners were not better there (whole decode step).
+# All 23 entries pass kernel-bench --check (fp64, deterministic). step_bench vs v8, 8 paired rounds,
+# Student-t 95%: 2048-token prompt B1 -6.8% (+/-0.9%), B2 -8.4% (+/-0.6%), B3/B4 no difference;
+# 16K-token prompt B1 -6.8%, B2 -6.8%, B3/B4 and prefill no difference.
+1280    5120   8    decode  none      split64  20     8          1
+5120    6144   8    decode  residual  splitsums32 160    4          1
+5120    6144   16   decode  residual  splitsums32 160    4          1
+5120    17408  8    decode  none      split64  80     8          1
+5120    17408  8    decode  residual  splitsums32 160    4          17
+5120    17408  16   decode  none      splitsums32 160    4          1
+5120    17408  16   decode  residual  splitsums32 160    4          1
+5120    25600  8    decode  none      split64  80     8          1
+5120    25600  16   decode  none      splitsums32 160    8          1
+14336   5120   16   decode  none      splitsums32 448    8          1
+17408   5120   8    decode  gateup    split32  544    4          1
+17408   5120   16   decode  gateup    splitsums32 544    8          1
+6144    5120   24   decode  none      n256     24     8
+5120    17408  24   decode  residual  splitsums32 160  4
+5120    17408  32   decode  residual  splitsums32 160  4
+5120    6144   24   decode  residual  splitsums32 160  4
+5120    6144   32   decode  residual  splitsums32 160  4
+16640   5120   24   decode  none      splitsums32 520  4
+16640   5120   32   decode  none      splitsums32 520  8
+14336   5120   24   decode  none      splitsums32 448  4
+14336   5120   32   decode  none      splitsums32 448  8
+17408   5120   24   decode  gateup    splitsums32 544  4
+17408   5120   32   decode  gateup    splitsums32 544  8

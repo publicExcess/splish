@@ -1,8 +1,8 @@
 #!/bin/sh
 # Splish: ./splash with Splish's defaults. For `serve`, it picks the kernel choices measured
-# for the model (tuning/) when this Mac is the chip they were tuned on (a 40-core M5 Max), and
-# turns on the copy rule. Anything already set wins: SPLASH_KERNEL_CHOICES,
-# SPLASH_M5_COPY_MIN_MATCH (0 turns the copy rule off). SPLISH_CHOICES=any applies the choices
+# for the model (tuning/) when this Mac is a chip they were measured on (a 40-core M5 Max, or a
+# 20-core M5 Pro), and turns on the copy rule. A nonempty SPLASH_KERNEL_CHOICES wins;
+# SPLASH_M5_COPY_MIN_MATCH=0 turns the copy rule off. SPLISH_CHOICES=any applies the choices
 # on another chip too. Every argument is passed on to ./splash.
 set -eu
 script=$0
@@ -28,16 +28,29 @@ if [ "${1:-}" = serve ]; then
     lower=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')
     choices=""
     case $lower in
-        *35b-a3b*) choices=m5max-40c-qwen36-35b.choices ;;
-        *gguf*:q8_0*) choices=m5max-40c-swift15-q80.choices ;;
-        *gguf*:*q4_k*|*gguf*:*q5_k*|*gguf*:*q6_k*) choices=m5max-40c-swift15-kquant.choices ;;
-        *gguf*) choices="" ;;
-        *27b*|*swift*) choices=m5max-40c-swift15-v8.choices ;;
+        *35b-a3b*) choices=m5max-40c-qwen36-35b-v2.choices ;;
+        *gguf*:q8_0*) choices=m5max-40c-swift15-q80-v2.choices ;;
+        *gguf*:*q4_k*|*gguf*:*q5_k*|*gguf*:*q6_k*) choices=m5max-40c-swift15-kquant-v2.choices ;;
+        *gguf*) choices=m5max-40c-swift15-draft.choices ;;
+        *27b*|*swift*) choices=m5max-40c-swift15-v12.choices ;;
     esac
     if [ -z "${SPLASH_KERNEL_CHOICES:-}" ] && [ -n "$choices" ]; then
         chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)
         cores=$(system_profiler SPDisplaysDataType 2>/dev/null | sed -n 's/.*Total Number of Cores: *//p' | head -1)
-        if [ "${SPLISH_CHOICES:-}" = any ] || { [ "$chip" = "Apple M5 Max" ] && [ "$cores" = 40 ]; }; then
+        # 20-core M5 Pro: automatic choices only for the Splash packages measured there (timed on the
+        # incoai packages; the derivatives share their shapes). Qwen3.8-27B gets its own table;
+        # for Qwen3.6-35B-A3B the first M5 Max table (the one measured there; not v2) was faster than
+        # Splash's defaults at 2-4 requests.
+        m5pro=""
+        if [ "$chip" = "Apple M5 Pro" ] && [ "$cores" = 20 ]; then
+            case $lower in
+                incoai/qwen3.8-27b-splash|audreyt/qwen3.8-27b-splash-abliterated)
+                    choices=m5pro-20c-qwen38-27b-hybrid.choices; m5pro=1 ;;
+                incoai/qwen3.6-35b-a3b-splash|tcstacks/qwen3.6-35b-a3b-heretic-splash)
+                    choices=m5max-40c-qwen36-35b.choices; m5pro=1 ;;
+            esac
+        fi
+        if [ "${SPLISH_CHOICES:-}" = any ] || [ -n "$m5pro" ] || { [ "$chip" = "Apple M5 Max" ] && [ "$cores" = 40 ]; }; then
             SPLASH_KERNEL_CHOICES="$ROOT/tuning/$choices"
             export SPLASH_KERNEL_CHOICES
             echo "splish: kernel choices tuning/$choices" >&2
