@@ -41,7 +41,7 @@ request on Qwen3.6-35B-A3B; see [RESULTS.md](RESULTS.md).*
 | Engine | Decode vs Splish | Prefill vs Splish | Source |
 |---|---|---|---|
 | Splash 1.1.0 | Splish 1.15–1.52x faster | same | measured, this Mac ([RESULTS.md](RESULTS.md)) |
-| oMLX | Splash 1.0 was 1.2–2.4x faster (widening with context) | about the same | measured on an earlier Splash and Swift-1.0 (22 Sep); not yet repeated with Splish |
+| oMLX | not yet measured against current oMLX (it added DFlash2 speculative decoding on 24 Sep) | not yet measured | — |
 | MTPLX | not yet measured on Qwen3.8-27B | not yet measured | — |
 
 ## Quality
