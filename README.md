@@ -15,26 +15,27 @@ choices loaded from a file, the copy rule, the benchmark tools) are available up
 
 ## Results
 
-**Splish v1.1** (September 2026) builds on v1.0 with newly tuned kernel choices: about 4% faster at one request
-on Qwen3.8-27B and 3–6% at 2–4 requests, a further 10–18% at one request on Qwen3.6-35B-A3B, a tuned table for the
-20-core M5 Pro, and fixes for non-Latin tokenization and very thin images ([RESULTS.md](RESULTS.md)).
+**Splish v1.1** (September 2026) builds on v1.0 with newly tuned kernel choices (faster at 2–4 requests on the
+Qwen3.8-27B family and at one request on Qwen3.6-35B-A3B), a tuned table for the 20-core M5 Pro, and fixes for
+non-Latin tokenization and very thin images ([RESULTS.md](RESULTS.md)).
 
-**Qwen3.8-27B (4-bit) on a 40-core M5 Max** (measured on v1.0; v1.1 is a few percent faster):
-- **Decode:** 91–178 tok/s for one request, depending on the workload; up to ~400 tok/s in total across 4 requests;
-  63–109 tok/s for one request as the context grows from 2K to 128K tokens.
-- **Prefill:** ~700–920 tok/s (2K–128K tokens). Splish does not change prefill; it matches Splash.
+**Qwen3.8-27B (4-bit) on a 40-core M5 Max, Splish v1.1:**
+- **Decode:** 178–191 tok/s for one long-reasoning request; up to ~415 tok/s in total across 4 requests; 62–110 tok/s
+  for one request as the context grows from 2K to 128K tokens.
+- **Prefill:** ~575–1,030 tok/s (2K–128K tokens). Splish does not change prefill; it matches Splash.
 
-**Against Splash 1.1.0 as shipped** (same Mac, same models; decode tok/s, stock → Splish; at 2–4 requests the total
-across requests):
+**Against Splash 1.1.0 as shipped** (same Mac, same models; long-reasoning prompts, 4,096 tokens out, sampled at the
+recommended settings; decode tok/s, stock → Splish; at 2–4 requests the total across requests; mean of two rounds,
+Splish ahead in every round):
 
 | Workload | 1 request | 2 requests | 3 requests | 4 requests |
 |---|---:|---:|---:|---:|
-| Inco's Qwen3.8-27B, long reasoning | 131 → **178** (+35%) | 223 → **292** (+31%) | 222 → **330** (+48%) | 299 → **392** (+31%) |
-| Inco's Qwen3.8-27B, short answers | 78 → **99** (+26%) | 134 → **164** (+23%) | 138 → **171** (+24%) | 183 → **210** (+15%) |
-| Swift-1.5 (a Qwen3.8-27B fine-tune), long reasoning | 141 → **179** (+27%) | 224 → **296** (+32%) | 224 → **342** (+52%) | 288 → **400** (+39%) |
-| Qwen3.6-35B-A3B, long reasoning | 331 → **348** (+5%) | 486 → **573** (+18%) | 553 → **672** (+22%) | 642 → **754** (+18%) |
+| Inco's Qwen3.8-27B | 134 → **178** (+33%) | 221 → **308** (+39%) | 217 → **332** (+53%) | 284 → **385** (+36%) |
+| Swift-1.5 (a Qwen3.8-27B fine-tune) | 139 → **191** (+37%) | 227 → **321** (+41%) | 221 → **353** (+60%) | 290 → **415** (+43%) |
+| Qwen3.6-35B-A3B | 347 → **397** (+14%) | 511 → **560** (+10%) | 553 → **677** (+22%) | 664 → **769** (+16%) |
 
-*Measured on v1.0; see above for what v1.1 adds.*
+One request by context length (Inco's Qwen3.8-27B, a distinct document of each length, 2,048 tokens out): decode
++26% to +31% from 2K to 64K and +10% at 128K; prefill unchanged. Method and every measurement: [RESULTS.md](RESULTS.md).
 
 ![Decode by context length](docs/m5/charts/context-decode.svg)
 ![Prefill by context length](docs/m5/charts/context-prefill.svg)

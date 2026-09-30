@@ -21,30 +21,30 @@
 <line class="g" x1="60" x2="740" y1="56.0" y2="56.0"/>
 <text class="l" x="52" y="60.0" text-anchor="end">1200</text>
 <text class="l" x="14" y="183.0" transform="rotate(-90 14 183.0)" text-anchor="middle">prompt tok/s</text>
-<rect class="s0" x="82.0" y="94.3" width="43.0" height="215.7" rx="2"/>
-<text class="v" x="103.5" y="90.3" text-anchor="middle">1019</text>
-<rect class="s1" x="128.0" y="114.6" width="43.0" height="195.4" rx="2"/>
-<text class="v" x="149.5" y="110.6" text-anchor="middle">923</text>
+<rect class="s0" x="82.0" y="92.6" width="43.0" height="217.4" rx="2"/>
+<text class="v" x="103.5" y="88.6" text-anchor="middle">1027</text>
+<rect class="s1" x="128.0" y="92.8" width="43.0" height="217.2" rx="2"/>
+<text class="v" x="149.5" y="88.8" text-anchor="middle">1026</text>
 <text class="l" x="128.0" y="328" text-anchor="middle">2K</text>
-<rect class="s0" x="218.0" y="134.5" width="43.0" height="175.5" rx="2"/>
-<text class="v" x="239.5" y="130.5" text-anchor="middle">829</text>
-<rect class="s1" x="264.0" y="120.6" width="43.0" height="189.4" rx="2"/>
-<text class="v" x="285.5" y="116.6" text-anchor="middle">895</text>
+<rect class="s0" x="218.0" y="103.0" width="43.0" height="207.0" rx="2"/>
+<text class="v" x="239.5" y="99.0" text-anchor="middle">978</text>
+<rect class="s1" x="264.0" y="107.9" width="43.0" height="202.1" rx="2"/>
+<text class="v" x="285.5" y="103.9" text-anchor="middle">955</text>
 <text class="l" x="264.0" y="328" text-anchor="middle">8K</text>
-<rect class="s0" x="354.0" y="129.9" width="43.0" height="180.1" rx="2"/>
-<text class="v" x="375.5" y="125.9" text-anchor="middle">851</text>
-<rect class="s1" x="400.0" y="127.1" width="43.0" height="182.9" rx="2"/>
-<text class="v" x="421.5" y="123.1" text-anchor="middle">864</text>
+<rect class="s0" x="354.0" y="132.8" width="43.0" height="177.2" rx="2"/>
+<text class="v" x="375.5" y="128.8" text-anchor="middle">837</text>
+<rect class="s1" x="400.0" y="133.3" width="43.0" height="176.7" rx="2"/>
+<text class="v" x="421.5" y="129.3" text-anchor="middle">835</text>
 <text class="l" x="400.0" y="328" text-anchor="middle">32K</text>
-<rect class="s0" x="490.0" y="141.9" width="43.0" height="168.1" rx="2"/>
-<text class="v" x="511.5" y="137.9" text-anchor="middle">794</text>
-<rect class="s1" x="536.0" y="140.0" width="43.0" height="170.0" rx="2"/>
-<text class="v" x="557.5" y="136.0" text-anchor="middle">803</text>
+<rect class="s0" x="490.0" y="155.3" width="43.0" height="154.7" rx="2"/>
+<text class="v" x="511.5" y="151.3" text-anchor="middle">731</text>
+<rect class="s1" x="536.0" y="155.3" width="43.0" height="154.7" rx="2"/>
+<text class="v" x="557.5" y="151.3" text-anchor="middle">731</text>
 <text class="l" x="536.0" y="328" text-anchor="middle">64K</text>
-<rect class="s0" x="626.0" y="161.6" width="43.0" height="148.4" rx="2"/>
-<text class="v" x="647.5" y="157.6" text-anchor="middle">701</text>
-<rect class="s1" x="672.0" y="159.1" width="43.0" height="150.9" rx="2"/>
-<text class="v" x="693.5" y="155.1" text-anchor="middle">713</text>
+<rect class="s0" x="626.0" y="188.5" width="43.0" height="121.5" rx="2"/>
+<text class="v" x="647.5" y="184.5" text-anchor="middle">574</text>
+<rect class="s1" x="672.0" y="187.7" width="43.0" height="122.3" rx="2"/>
+<text class="v" x="693.5" y="183.7" text-anchor="middle">578</text>
 <text class="l" x="672.0" y="328" text-anchor="middle">128K</text>
 <rect class="s0" x="60" y="350" width="12" height="12" rx="2"/>
 <text class="l" x="78" y="360">stock 1.1.0</text>

@@ -16,6 +16,31 @@ are ties**. Quality: a 95-task set and a 1,621-item benchmark set, both builds.
 | Quality | Swift-1.5 on 1,621 items, greedy: stock 82.8%, Splish 82.7% (4 items differ, 1 vs 3; p = 0.63) |
 | Fixes | tokenizer (Hindi, Thai, Arabic samples: 14–53% fewer tokens); very thin images padded instead of rejected |
 
+### v1.1 against stock Splash 1.1.0 (measured 29 Sep 2026)
+
+Same Mac, same packages, test servers side by side; `dev/m5/serve_bench.py`, long-reasoning prompts, 4,096 tokens out,
+sampled (temperature 1.0, top_p 0.95, top_k 20), aggregate decode tok/s while all C requests decode, two rounds
+alternating stock and Splish (Splish ahead in every round of every cell). Energy from `macmon` package power.
+
+| Workload | C=1 | C=2 | C=3 | C=4 |
+|---|---:|---:|---:|---:|
+| Inco's Qwen3.8-27B | 134.2 → **178.1** (+33%) | 221.4 → **308.3** (+39%) | 217.3 → **331.5** (+53%) | 283.9 → **385.4** (+36%) |
+| Swift-1.5 | 139.4 → **191.2** (+37%) | 227.0 → **321.1** (+41%) | 220.7 → **353.2** (+60%) | 289.9 → **414.6** (+43%) |
+| Qwen3.6-35B-A3B (v2 table) | 346.9 → **396.7** (+14%) | 511.2 → **560.4** (+10%) | 552.6 → **676.7** (+22%) | 663.6 → **768.5** (+16%) |
+| Energy per token, Inco's 27B, J | 0.40 → 0.30 | 0.24 → 0.19 | 0.26 → 0.19 | 0.22 → 0.19 |
+
+One request, a distinct WikiText document of each length before the prompt, 2,048 tokens out; decode is the mean of
+two rounds, prefill the cold first round (Inco's Qwen3.8-27B, tok/s, stock → Splish):
+
+| Context | 2K | 8K | 32K | 64K | 128K |
+|---|---:|---:|---:|---:|---:|
+| **Decode** | 87.6 → **110.4** (+26%) | 77.5 → **101.4** (+31%) | 68.9 → **86.7** (+26%) | 61.4 → **78.1** (+27%) | 56.2 → **61.9** (+10%) |
+| Prefill | 1,027 → 1,026 | 978 → 955 | 837 → 835 | 731 → 731 | 574 → 578 |
+
+Against v1.0's measurements (26 Sep): one request is unchanged on the 27B within run spread (177.7 → 178.1) and Swift
+gains 7%; 2 requests +6% / +9%; Qwen3.6-35B-A3B one request +14% (348 → 397). Runs vary by up to ~7%, so single-cell
+differences under about 5% are ties.
+
 ## v1.0 (September 2026)
 
 **Against Splash 1.1.0 as shipped**, on the same Mac with the same models. Each cell is decode
