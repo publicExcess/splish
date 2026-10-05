@@ -15,9 +15,11 @@ when the Hub cannot answer or the new commit cannot be installed.
 from __future__ import annotations
 
 import json
+import math
 import os
+import struct
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 if __package__:
@@ -56,6 +58,11 @@ class Target:
     # serves (the layout in assembly.py). A GGUF's configuration and tokenizer
     # are derived from it at installation instead.
     files: dict[str, str]
+    # The family's base vision tower (families.BASE_VISION), when the target
+    # ships none Splash can use: its repository at the pinned commit, and the
+    # assembly paths its files serve.
+    base: hub.Repository | None = None
+    base_files: dict[str, str] = field(default_factory=dict)
 
 
 def _root_ggufs(files):
@@ -103,6 +110,16 @@ def select_gguf(files, variant):
     raise models.ModelError(f"{choice} (files in the repository root: {listed})")
 
 
+class NoUsableProjector(models.ModelError):
+    """A GGUF repository without a BF16 or F32 vision projector; projectors
+    lists each root GGUF named mmproj: (name, header, architecture, the type
+    names of its tensors)."""
+
+    def __init__(self, message, projectors):
+        super().__init__(message)
+        self.projectors = projectors
+
+
 def select_vision(repo):
     """The name and header of the GGUF repository's vision projector, chosen
     by content among its root GGUF files named mmproj, whatever the publisher
@@ -112,7 +129,7 @@ def select_vision(repo):
     narrower exponent than BF16, so an F16 projector has already rounded
     small weights, as a quantized one has. Each header costs a few range
     requests."""
-    usable, found = {"BF16": [], "F32": []}, []
+    usable, found, named = {"BF16": [], "F32": []}, [], []
     for name in filter(_projector_named, _root_ggufs(repo.files)):
         with repo.open(name) as stream:
             header = gguf.Metadata(stream, tensors=True)
@@ -121,6 +138,7 @@ def select_vision(repo):
             gguf.TENSOR_TYPES.get(kind, f"type {kind}")
             for kind in header.tensors.values()
         }
+        named.append((name, header, architecture, types))
         found.append(f"{name} ({architecture}: {', '.join(sorted(types))})")
         if architecture == "clip" and types and types <= {"BF16", "F32"}:
             usable["BF16" if "BF16" in types else "F32"].append((name, header))
@@ -133,10 +151,11 @@ def select_vision(repo):
                 + ", ".join(name for name, _ in projectors)
                 + ", describe no single tower; use --language-only to serve text only"
             )
-    raise models.ModelError(
+    raise NoUsableProjector(
         "the GGUF repository has no BF16 or F32 vision projector ("
         + ("; ".join(found) or "no GGUF named mmproj")
-        + "); use --language-only to serve text only"
+        + "); use --language-only to serve text only",
+        named,
     )
 
 
@@ -166,7 +185,13 @@ def _gguf_target(repo, variant, language_only):
     files = {"target/" + name: name}
     vision_header = None
     if not language_only:
-        files[assembly.GGUF_VISION], vision_header = select_vision(repo)
+        try:
+            files[assembly.GGUF_VISION], vision_header = select_vision(repo)
+        except NoUsableProjector as error:
+            config = gguf.model_config(header)
+            base, base_files = _gguf_base_vision(repo, config, error)
+            print(f"Selected {name} from {repo.name}.", flush=True)
+            return Target("gguf", "safetensors", config, files, base, base_files)
         _validate_processor(gguf.processor_config(vision_header))
     config = gguf.model_config(header, vision_header)
     print(f"Selected {name} from {repo.name}.", flush=True)
@@ -211,9 +236,10 @@ def _mlx_target(repo, language_only):
         _validate_processor(models.read_json(repo.file("preprocessor_config.json")))
         shards = _weight_files(repo, "vision_tower.")
         if not shards:
-            raise models.ModelError(
-                f"{repo.name} has no vision tower; use --language-only to serve text only"
-            )
+            no_tower = f"{repo.name} has no vision tower"
+            base, base_files = _mlx_base_vision(repo, config, no_tower)
+            files |= {"target/" + n: n for n in _weight_files(repo)}
+            return Target("mlx-affine", "safetensors", config, files, base, base_files)
         files["vision/config.json"] = "config.json"
         files |= {"vision/" + n: n for n in shards}
     files |= {"target/" + n: n for n in _weight_files(repo)}
@@ -250,20 +276,27 @@ def _weight_files(repo, prefix=""):
 
 
 def _safetensors_tensors(repo, name):
-    """The tensor names in a safetensors file's header: its length (8 bytes,
-    little-endian), then a JSON object, read on demand, without a download."""
+    """The tensor names in a safetensors file's header, read on demand,
+    without a download."""
     with repo.open(name) as stream:
-        size = int.from_bytes(stream.read(8), "little")
-        # The native checkpoint reader's bound on one header.
-        if not 2 <= size <= 1 << 20:
-            raise models.ModelError(f"invalid safetensors header in {name}")
-        try:
-            header = json.loads(stream.read(size))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise models.ModelError(f"invalid safetensors header in {name}") from error
+        header, _ = _safetensors_header(stream, name)
+    return set(header) - {"__metadata__"}
+
+
+def _safetensors_header(stream, name):
+    """A safetensors header, its length (8 bytes, little-endian) then a JSON
+    object, and the offset of the data its offsets count from."""
+    size = int.from_bytes(stream.read(8), "little")
+    # The native checkpoint reader's bound on one header.
+    if not 2 <= size <= 1 << 20:
+        raise models.ModelError(f"invalid safetensors header in {name}")
+    try:
+        header = json.loads(stream.read(size))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise models.ModelError(f"invalid safetensors header in {name}") from error
     if not isinstance(header, dict):
         raise models.ModelError(f"invalid safetensors header in {name}")
-    return set(header) - {"__metadata__"}
+    return header, 8 + size
 
 
 def _validate_processor(config):
@@ -280,6 +313,270 @@ def _validate_processor(config):
     }
     if any(config.get(key) != value for key, value in expected.items()):
         raise models.ModelError("unsupported vision preprocessing configuration")
+
+
+# The vision_config fields the native model inspection reads
+# (ModelDescriptor.mm), which a target's must state as its base tower's do.
+VISION_CONFIG_KEYS = (
+    "depth",
+    "hidden_size",
+    "num_heads",
+    "intermediate_size",
+    "out_hidden_size",
+    "patch_size",
+    "spatial_merge_size",
+    "temporal_patch_size",
+    "in_channels",
+    "num_position_embeddings",
+    "hidden_act",
+    "deepstack_visual_indexes",
+)
+# GGML tensor types an unquantized projector stores, compared with the base.
+F32, F16, BF16 = 0, 1, 30
+# F16's smallest normal and largest finite magnitudes: below the first, F16
+# underflows to subnormals or zero; beyond the second, it overflows.
+F16_NORMAL, F16_MAX = 2.0**-14, 65504.0
+
+
+def _base_tower(config):
+    """The family and base vision tower (families.BASE_VISION) of a target's
+    configuration, or None: no base is known for another family, or for an
+    architecture no family has."""
+    try:
+        family = families.family_for(config)
+    except models.ModelError:
+        return None
+    base = families.BASE_VISION.get(family.name)
+    return base and (family.name, base)
+
+
+def _base_repository(base):
+    """The base tower's repository at its pinned commit: its cached snapshot
+    when that holds every file used, without a Hub request, else as the Hub
+    lists it. Its processor configuration is checked as a target's is."""
+    used = {"config.json", "preprocessor_config.json", base.shard}
+    repo = None
+    if hub.snapshot(base.repo, base.revision).is_dir():
+        repo = hub.Repository.cached(base.repo, base.revision)
+    if repo is None or not used <= repo.files:
+        repo = hub.Repository.resolve(base.repo, base.revision)
+    _validate_processor(models.read_json(repo.file("preprocessor_config.json")))
+    return repo
+
+
+def _base_files(base):
+    """Assembly path -> base repository file: its configuration and the shard
+    holding the tower, served as an MLX tower is."""
+    return {"vision/config.json": "config.json", "vision/" + base.shard: base.shard}
+
+
+def _use_base(found, base, family):
+    """Report, on one line, that the base tower serves the target's images."""
+    print(
+        f"vision: {found}; using {family}'s base tower "
+        f"({base.repo}@{base.revision[:7]}). "
+        "Use --language-only to serve without vision.",
+        flush=True,
+    )
+
+
+def _mlx_base_vision(repo, config, no_tower):
+    """The base tower of an MLX target that ships none, whose configuration
+    states the base tower's vision_config; else the error of a target without
+    a tower."""
+    hint = "; use --language-only to serve text only"
+    if (known := _base_tower(config)) is None:
+        raise models.ModelError(no_tower + hint)
+    family, base = known
+    base_repo = _base_repository(base)
+    expected = models.read_json(base_repo.file("config.json")).get("vision_config")
+    stated = config.get("vision_config")
+    if not isinstance(stated, dict) or not isinstance(expected, dict):
+        raise models.ModelError(f"{no_tower}, and states no vision_config{hint}")
+    if differences := [
+        key for key in VISION_CONFIG_KEYS if stated.get(key) != expected.get(key)
+    ]:
+        raise models.ModelError(
+            f"{no_tower}, and its vision_config is not {family}'s "
+            f"({', '.join(differences)} differ){hint}"
+        )
+    _use_base(f"{repo.name} ships no vision tower", base, family)
+    return base_repo, _base_files(base)
+
+
+def _gguf_base_vision(repo, config, error):
+    """The base tower of a GGUF target whose repository ships no vision
+    projector, or only unquantized ones (F16 among them) that each equal the
+    base tower within F16 rounding (_projector_difference); else error, the
+    reason selection found no projector to use."""
+    if (known := _base_tower(config)) is None:
+        raise error
+    family, base = known
+    if not error.projectors:
+        base_repo = _base_repository(base)
+        _use_base(f"{repo.name} ships no vision tower", base, family)
+        return base_repo, _base_files(base)
+    candidates = [
+        name
+        for name, _, architecture, types in error.projectors
+        if architecture == "clip" and types and types <= {"F16", "F32", "BF16"}
+    ]
+    if not candidates:
+        raise error
+    base_repo = _base_repository(base)
+    depth = models.read_json(base_repo.file("config.json"))["vision_config"]["depth"]
+    hint = "; use --language-only to serve text only"
+    for name in candidates:
+        print(f"vision: comparing {name} with {family}'s base tower.", flush=True)
+        if difference := _projector_difference(repo, name, base_repo, base, depth):
+            raise models.ModelError(
+                f"{str(error).removesuffix(hint)}; {name} is not {family}'s "
+                f"base tower ({difference}){hint}"
+            )
+    _use_base(
+        f"{repo.name} ships its vision tower only as {', '.join(candidates)}, "
+        f"which equals {family}'s base tower within F16 rounding",
+        base,
+        family,
+    )
+    return base_repo, _base_files(base)
+
+
+def _tower_tensors(depth):
+    """Each tensor of a tower of depth blocks: its MLX name and the GGUF names
+    of its values, as VisionLoader.cpp binds them. The MLX patch embedding,
+    one Conv3d weight, is one GGUF tensor per temporal frame."""
+    modules = [
+        (f"blocks.{i}.{mlx}", f"v.blk.{i}.{name}")
+        for i in range(depth)
+        for mlx, name in (
+            ("norm1", "ln1"),
+            ("attn.qkv", "attn_qkv"),
+            ("attn.proj", "attn_out"),
+            ("norm2", "ln2"),
+            ("mlp.linear_fc1", "ffn_up"),
+            ("mlp.linear_fc2", "ffn_down"),
+        )
+    ]
+    modules += [
+        ("merger.norm", "v.post_ln"),
+        ("merger.linear_fc1", "mm.0"),
+        ("merger.linear_fc2", "mm.2"),
+    ]
+    tensors = [
+        ("patch_embed.proj.weight", ("v.patch_embd.weight", "v.patch_embd.weight.1")),
+        ("patch_embed.proj.bias", ("v.patch_embd.bias",)),
+        ("pos_embed.weight", ("v.position_embd.weight",)),
+    ]
+    tensors += [
+        (f"{mlx}.{kind}", (f"{name}.{kind}",))
+        for mlx, name in modules
+        for kind in ("weight", "bias")
+    ]
+    return [("vision_tower." + mlx, names) for mlx, names in tensors]
+
+
+def _gguf_tensor_table(stream):
+    """Each tensor of the GGUF at the stream's start: name -> (shape in
+    numpy's order, GGML type, offset of its data in the file), read through
+    the bounded metadata reader."""
+    count = struct.unpack("<Q", stream.read(16)[8:])[0]
+    stream.seek(0)
+    header = gguf.Metadata(stream)
+    # The reader stops at the tensor table and bounds its count.
+    table = {}
+    for _ in range(count):
+        name = header.string()
+        rank = header.scalar("I")
+        if rank > gguf.Metadata.MAX_DIMENSIONS or name in table:
+            raise models.ModelError("invalid GGUF tensor table")
+        dims = struct.unpack(f"<{rank}Q", header.read(8 * rank))
+        table[name] = (tuple(reversed(dims)), header.scalar("I"), header.scalar("Q"))
+    alignment = header.values.get("general.alignment", 32)
+    if type(alignment) is not int or alignment <= 0:
+        raise models.ModelError("invalid GGUF alignment")
+    start = header.consumed + -header.consumed % alignment
+    return {
+        name: (shape, kind, start + at) for name, (shape, kind, at) in table.items()
+    }
+
+
+def _projector_difference(repo, name, base_repo, base, depth):
+    """Why the projector name in repo is not the base tower, or None when it
+    is: it holds exactly the tower's tensors, of the base's shapes, and each
+    value is the base's BF16 value as F16 rounds it (to nearest, ties to
+    even), F32 or BF16 holds it, except where F16 underflows (both below
+    F16's smallest normal, of one sign or zero) or overflows (infinite or
+    F16's largest finite, of one sign). Both are read tensor by tensor, from
+    the Hub cache or by range requests, in the projector's order, and the
+    first difference ends the comparison."""
+    import numpy as np
+
+    tensors = _tower_tensors(depth)
+    with repo.open(name) as projector, base_repo.open(base.shard) as checkpoint:
+        table = _gguf_tensor_table(projector)
+        header, data = _safetensors_header(checkpoint, base.shard)
+        expected = {gguf_name for _, names in tensors for gguf_name in names}
+        if extra := sorted(set(table) - expected):
+            return f"{len(extra)} tensor(s) the tower does not have, {extra[0]} first"
+        if missing := sorted(expected - set(table)):
+            return f"{len(missing)} tower tensor(s) missing, {missing[0]} first"
+        for mlx, names in sorted(tensors, key=lambda t: table[t[1][0]][2]):
+            entry = header.get(mlx)
+            if not isinstance(entry, dict) or entry.get("dtype") != "BF16":
+                raise models.ModelError(f"the base tower has no BF16 {mlx}")
+            shape = tuple(entry["shape"])
+            begin, end = entry["data_offsets"]
+            if end - begin != 2 * math.prod(shape):
+                raise models.ModelError(f"invalid base tower tensor {mlx}")
+            checkpoint.seek(data + begin)
+            bits = np.frombuffer(checkpoint.read(end - begin), "<u2")
+            values = (bits.astype("<u4") << 16).view("<f4").reshape(shape)
+            # The MLX patch embedding is [output, frame, row, column, channel];
+            # each GGUF frame is [output, channel, row, column].
+            frames = (
+                [values[:, frame].transpose(0, 3, 1, 2) for frame in (0, 1)]
+                if len(names) == 2
+                else [values]
+            )
+            for gguf_name, base_values in zip(names, frames, strict=True):
+                found, kind, offset = table[gguf_name]
+                if found != base_values.shape:
+                    return (
+                        f"{gguf_name} is {list(found)}, not {list(base_values.shape)}"
+                    )
+                size = {F32: 4, F16: 2, BF16: 2}[kind] * math.prod(found)
+                projector.seek(offset)
+                raw = projector.read(size)
+                if len(raw) != size:
+                    raise models.ModelError(f"truncated {name}")
+                if not _equals_rounded(
+                    np.ascontiguousarray(base_values).ravel(), raw, kind
+                ):
+                    return f"{gguf_name} differs"
+    return None
+
+
+def _equals_rounded(values, raw, kind):
+    """Whether raw, little-endian values of GGML type kind, holds values (F32,
+    from BF16): exactly as F32 or BF16, or as F16 rounds them, within F16's
+    underflow and overflow."""
+    import numpy as np
+
+    if kind == F32:
+        return np.array_equal(np.frombuffer(raw, "<u4"), values.view("<u4"))
+    if kind == BF16:
+        return np.array_equal(np.frombuffer(raw, "<u2"), values.view("<u4") >> 16)
+    found = np.frombuffer(raw, "<f2")
+    with np.errstate(over="ignore"):
+        differs = found.view("<u2") != values.astype("<f2").view("<u2")
+    if not differs.any():
+        return True
+    base, found = values[differs], found[differs].astype("<f4")
+    same_sign = (found == 0) | (np.signbit(found) == np.signbit(base))
+    underflow = (np.abs(base) < F16_NORMAL) & (np.abs(found) < F16_NORMAL)
+    overflow = (np.abs(base) > F16_MAX) & (np.isinf(found) | (np.abs(found) == F16_MAX))
+    return bool((same_sign & (underflow | overflow)).all())
 
 
 def prepare(selection):
@@ -441,6 +738,9 @@ def _install(selection, repo, installed, draft=None):
             flush=True,
         )
         downloaded = repo.download(set(target.files.values()))
+        if target.base:
+            fetched = target.base.download(set(target.base_files.values()))
+            files |= {path: fetched[name] for path, name in target.base_files.items()}
     files |= {path: downloaded[name] for path, name in target.files.items()}
     record = {
         "version": 1,
@@ -450,6 +750,8 @@ def _install(selection, repo, installed, draft=None):
         "vision_format": target.vision_format,
         "sources": {"target": repo.identity(), "draft": draft.identity()},
     }
+    if target.base:
+        record["sources"]["vision"] = target.base.identity()
     models_root = selection.models_root
     models_root.mkdir(parents=True, exist_ok=True)
     # Everything written under the models root is written under the lock.
@@ -497,6 +799,11 @@ def _changes(installed, family, draft):
         "metadata"
     ] != assembly.metadata_key(installed["files"]):
         changes.append("the GGUF metadata adapter changed")
+    base = families.BASE_VISION.get(family.name)
+    if (vision := installed["sources"].get("vision")) and (
+        base is None or base.identity() != vision
+    ):
+        changes.append(f"its base vision tower {vision['repo']} changed")
     return changes
 
 

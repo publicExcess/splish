@@ -124,6 +124,33 @@ FAMILIES = (
 )
 
 
+@dataclass(frozen=True)
+class BaseVision:
+    """A base model's vision tower, unquantized in an MLX shard at a pinned
+    commit, that a family's fine-tunes keep: the tower a target is served
+    with when it ships none Splash can use (upstream.py)."""
+
+    repo: str
+    revision: str
+    # The shard holding every vision_tower.* tensor, beside config.json and
+    # preprocessor_config.json.
+    shard: str
+
+    def identity(self):
+        return {"repo": self.repo, "revision": self.revision}
+
+
+# Each family's base vision tower, by family name: Qwen3.8-27B's, BF16, as
+# fine-tunes such as Swift-1.5 leave it (333 of 333 tensors identical).
+BASE_VISION = {
+    "Qwen3.8-27B": BaseVision(
+        "mlx-community/Qwen3.8-27B-4bit",
+        "10c35caafbb80f7dc6a7a432cdd11af10a6d4818",
+        "model-00001-of-00003.safetensors",
+    ),
+}
+
+
 def named(name):
     """The family called name, or None."""
     return next((family for family in FAMILIES if family.name == name), None)

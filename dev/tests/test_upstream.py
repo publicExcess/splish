@@ -2,6 +2,7 @@ import contextlib
 import dataclasses
 import errno
 import fcntl
+import hashlib
 import io
 import json
 import shutil
@@ -11,23 +12,30 @@ from pathlib import Path
 from unittest import mock
 
 import httpx
+import numpy as np
 from huggingface_hub.errors import IncompleteSnapshotError
 
+from dev.tests import test_gguf_metadata as gguf_fixtures
 from dev.tests.installer_fixtures import (
+    BASE,
     DENSE,
     DRAFT_COMMIT,
     MODEL,
     MOE,
     PROCESSOR,
+    VISION_CONFIG,
     FakeHub,
+    base_vision_repo,
     cached_snapshot,
     draft_dir,
     fake_hub,
     http_error,
     mlx_target,
     pins,
+    projector,
     selection,
     text_config,
+    tower,
 )
 from install import assembly, families, hub, legacy, models, upstream
 
@@ -342,8 +350,8 @@ class UpstreamTest(unittest.TestCase):
             "language_model.lm_head.weight": "model-00002-of-00002.safetensors",
         }
 
-        def target(root):
-            mlx_target(root, DENSE)
+        def target(root, family=DENSE):
+            mlx_target(root, family)
             (root / "model.safetensors").unlink()
             (root / "model.safetensors.index.json").write_text(
                 json.dumps({"weight_map": shards})
@@ -366,9 +374,10 @@ class UpstreamTest(unittest.TestCase):
             sorted(p.name for p in (chosen.link / "target").iterdir()),
             ["config.json", *sorted(set(shards.values()))],
         )
-        # A checkpoint without the tower cannot serve images.
+        # A checkpoint without the tower, of a family without a base tower
+        # (families.BASE_VISION), cannot serve images.
         del shards["vision_tower.blocks.0.attn.qkv.weight"]
-        fake.publish("someone/text-model", "b" * 40, target)
+        fake.publish("someone/text-model", "b" * 40, lambda p: target(p, MOE))
         with self.assertRaisesRegex(models.ModelError, "no vision tower"):
             self.prepare(
                 selection(self.root, "someone/text-model", language_only=False)
@@ -390,9 +399,9 @@ class UpstreamTest(unittest.TestCase):
         self.assertNotIn(f"{MODEL}/model-*.safetensors", fake.downloads)
 
     def test_a_single_checkpoint_file_is_searched_for_the_tower_by_header(self):
-        def checkpoint(tensors):
+        def checkpoint(tensors, family=DENSE):
             def build(root):
-                mlx_target(root, DENSE)
+                mlx_target(root, family)
                 header = json.dumps(
                     {
                         t: {"dtype": "U8", "shape": [1], "data_offsets": [0, 1]}
@@ -422,7 +431,9 @@ class UpstreamTest(unittest.TestCase):
             ["config.json", "model.safetensors"],
         )
         fake.publish(
-            "someone/text", "c" * 40, checkpoint(["language_model.lm_head.weight"])
+            "someone/text",
+            "c" * 40,
+            checkpoint(["language_model.lm_head.weight"], MOE),
         )
         with self.assertRaisesRegex(models.ModelError, "no vision tower"):
             self.prepare(selection(self.root, "someone/text", language_only=False))
@@ -1007,6 +1018,9 @@ class UpstreamTest(unittest.TestCase):
             lambda r: r["files"]["config.json"].update(digest="z" * 64),
             lambda r: r["files"].update({"../escape": r["files"]["config.json"]}),
             lambda r: r["files"].update({".": r["files"]["config.json"]}),
+            # A base vision tower is a third source, of an MLX tower only.
+            lambda r: r["sources"].update(vision=r["sources"]["draft"]),
+            lambda r: r["sources"].update(other=r["sources"]["draft"]),
         ):
             changed = json.loads(json.dumps(record))
             change(changed)
@@ -1223,6 +1237,376 @@ class UpstreamTest(unittest.TestCase):
             link.parent.mkdir(parents=True, exist_ok=True)
             link.symlink_to(self.root)
         self.assertEqual(set(models.selection_links(self.root / "models")), links)
+
+
+SWIFT = "ukisai/Swift-1.5-4bit-MLX"
+SWIFT_GGUF = "ukisai/Swift-1.5-Qwen3.8-27B-GGUF"
+F16_PROJECTOR = "mmproj-Swift-1.5-Qwen3.8-27B-F16.gguf"
+NOTICE = (
+    "using Qwen3.8-27B's base tower (mlx-community/Qwen3.8-27B-4bit@10c35ca). "
+    "Use --language-only to serve without vision."
+)
+NO_PROJECTOR = (
+    rf"no BF16 or F32 vision projector \({F16_PROJECTOR} \(clip: F16, F32\)\)"
+)
+
+
+class BaseVisionTest(unittest.TestCase):
+    """A Qwen3.8-27B target that ships no vision tower Splash can use is served
+    with its family's base tower (families.BASE_VISION); any other start is
+    as it was."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.cache = self.root / "hub"
+        self.fake = fake_hub(self, self.cache)
+        self.tower = tower()
+        # The base repository's main branch is MODEL's; the tower is pinned.
+        self.fake.publish(
+            BASE.repo,
+            BASE.revision,
+            lambda p: base_vision_repo(p, self.tower),
+            branch="base",
+        )
+
+    prepare = staticmethod(UpstreamTest.prepare)
+
+    @staticmethod
+    def mlx_repository(root, *, family=DENSE, with_tower=False, vision=VISION_CONFIG):
+        """An MLX checkpoint of family in two shards, holding the vision tower
+        when with_tower, whose configuration states vision unless None."""
+        mlx_target(root, family)
+        config = json.loads((root / "config.json").read_text())
+        if vision is not None:
+            config["vision_config"] = vision
+        (root / "config.json").write_text(json.dumps(config))
+        (root / "model.safetensors").unlink()
+        weights = {
+            "language_model.model.embed_tokens.weight": "model-00001-of-00002.safetensors",
+            "language_model.lm_head.weight": "model-00002-of-00002.safetensors",
+        }
+        if with_tower:
+            weights["vision_tower.blocks.0.attn.qkv.weight"] = (
+                "model-00001-of-00002.safetensors"
+            )
+        (root / "model.safetensors.index.json").write_text(
+            json.dumps({"weight_map": weights})
+        )
+        for name in set(weights.values()):
+            (root / name).write_text(name)
+        (root / "preprocessor_config.json").write_text(json.dumps(PROCESSOR))
+
+    def gguf_repository(self, root, tensors=None, *, flush=False, family=DENSE):
+        """A GGUF repository of a loadable family target, with an F16 mmproj
+        of tensors unless None."""
+        root.mkdir(parents=True)
+        values = gguf_fixtures.fixture(native=True)
+        if family is DENSE:
+            values = {
+                key: value
+                for key, value in values.items()
+                if not key.startswith("qwen35moe.")
+            } | {
+                "general.architecture": "qwen35",
+                "qwen35.embedding_length": 5120,
+                "qwen35.block_count": 64,
+                "qwen35.full_attention_interval": 4,
+                "qwen35.context_length": 262144,
+                "qwen35.attention.head_count": 24,
+                "qwen35.attention.head_count_kv": 4,
+                "qwen35.attention.key_length": 256,
+            }
+        gguf_fixtures.write_gguf(
+            root / "Swift-1.5-Qwen3.8-27B-Q4_K_M.gguf",
+            values,
+            gguf_fixtures.loadable_tensors(values, self.root).items(),
+        )
+        if tensors is not None:
+            projector(root / F16_PROJECTOR, tensors, flush=flush)
+
+    def base_requests(self):
+        return [r for r in self.fake.requests if r[0] == BASE.repo and r[1]]
+
+    def assert_record(self, chosen, vision_format, files):
+        """The installation's record is the one an installation without a
+        base tower always wrote, and its assembly is named by that record's
+        hash: nothing about it changed."""
+        expected = {
+            "version": 1,
+            "model": chosen.model,
+            "family": DENSE.name,
+            "target_format": "mlx-affine",
+            "vision_format": vision_format,
+            "sources": {
+                "target": {"repo": chosen.model, "revision": "b" * 40},
+                "draft": {"repo": DENSE.draft.repo, "revision": DRAFT_COMMIT},
+            },
+            "files": {
+                name: assembly.file_record(path) for name, path in sorted(files.items())
+            },
+        }
+        self.assertEqual(models.read_json(chosen.link / "model.json"), expected)
+        self.assertEqual(
+            chosen.link.resolve().name,
+            hashlib.sha256(models.json_bytes(expected)).hexdigest(),
+        )
+
+    def target_files(self, *names):
+        """The assembly paths of the MLX target's configuration, tokenizer
+        and shards names, and its draft's files."""
+        target = self.fake.snapshot(SWIFT, "b" * 40)
+        draft = self.fake.snapshot(DENSE.draft.repo, DRAFT_COMMIT)
+        files = {
+            path: target / "config.json"
+            for path in ("config.json", "target/config.json", "tokenizer/config.json")
+        }
+        files |= {
+            f"tokenizer/{name}": target / name
+            for name in ("tokenizer.json", "tokenizer_config.json")
+        }
+        files |= {f"target/{name}": target / name for name in names}
+        files |= {
+            f"draft/{name}": draft / name
+            for name in ("config.json", "model.safetensors")
+        }
+        return files
+
+    def test_an_mlx_target_without_a_tower_is_served_with_the_base_tower(self):
+        self.fake.publish(SWIFT, "b" * 40, self.mlx_repository)
+        chosen = selection(self.root, SWIFT, language_only=False)
+        output, _ = self.prepare(chosen)
+        self.assertIn(f"vision: {SWIFT} ships no vision tower; {NOTICE}", output)
+        record = assembly.verify(chosen.link, full=True)
+        self.assertEqual(record["vision_format"], "safetensors")
+        self.assertEqual(record["sources"]["vision"], BASE.identity())
+        base = self.fake.snapshot(BASE.repo, BASE.revision)
+        self.assertEqual(
+            sorted(p.name for p in (chosen.link / "vision").iterdir()),
+            ["config.json", BASE.shard],
+        )
+        for name in ("config.json", BASE.shard):
+            self.assertEqual((chosen.link / "vision" / name).readlink(), base / name)
+        # The target's configuration, stating the base's vision_config, is
+        # the root configuration still.
+        self.assertEqual(
+            (chosen.link / "config.json").readlink(),
+            self.fake.snapshot(SWIFT, "b" * 40) / "config.json",
+        )
+        # Only the files used are fetched from the base, which is pinned too.
+        self.assertEqual(
+            sorted(d for d in self.fake.downloads if d.startswith(BASE.repo)),
+            sorted(
+                f"{BASE.repo}/{name}"
+                for name in ("config.json", "preprocessor_config.json", BASE.shard)
+            ),
+        )
+        self.assertEqual(
+            pins(self.cache), sorted([BASE.revision, "b" * 40, DRAFT_COMMIT])
+        )
+        # A start of the installed commits asks for the target and the draft.
+        self.fake.requests.clear(), self.fake.downloads.clear()
+        output, _ = self.prepare(chosen)
+        self.assertIn("is already installed", output)
+        self.assertEqual(self.fake.requests, [(SWIFT, None), (DENSE.draft.repo, None)])
+        self.assertEqual(self.fake.downloads, [])
+        # A release pinning another base commit installs it.
+        moved = dataclasses.replace(BASE, revision="f" * 40)
+        self.fake.publish(
+            BASE.repo, moved.revision, lambda p: base_vision_repo(p, self.tower), "f"
+        )
+        with mock.patch.dict(families.BASE_VISION, {DENSE.name: moved}):
+            output, _ = self.prepare(chosen)
+        self.assertIn(f"its base vision tower {BASE.repo} changed", output)
+        record = assembly.verify(chosen.link)
+        self.assertEqual(record["sources"]["vision"], moved.identity())
+        self.assertEqual(pins(self.cache), sorted(["f" * 40, "b" * 40, DRAFT_COMMIT]))
+
+    def test_an_mlx_target_must_state_the_base_towers_vision_config(self):
+        for commit, vision, error in (
+            (
+                "b" * 40,
+                VISION_CONFIG | {"depth": 2},
+                r"vision_config is not Qwen3.8-27B's \(depth differ\)",
+            ),
+            ("c" * 40, None, "states no vision_config"),
+        ):
+            with self.subTest(error=error):
+                self.fake.publish(
+                    SWIFT, commit, lambda p: self.mlx_repository(p, vision=vision)
+                )
+                with self.assertRaisesRegex(
+                    models.ModelError, f"{SWIFT} has no vision tower, and .*{error}"
+                ):
+                    self.prepare(selection(self.root, SWIFT, language_only=False))
+        # Its weights were never downloaded.
+        self.assertFalse([d for d in self.fake.downloads if "model-0000" in d])
+
+    def test_a_gguf_target_without_a_projector_is_served_with_the_base_tower(self):
+        self.fake.publish(SWIFT_GGUF, "c" * 40, self.gguf_repository)
+        chosen = selection(self.root, SWIFT_GGUF + ":Q4_K_M", language_only=False)
+        output, _ = self.prepare(chosen)
+        self.assertIn(f"vision: {SWIFT_GGUF} ships no vision tower; {NOTICE}", output)
+        self.assert_gguf_with_base_tower(chosen)
+
+    def test_a_gguf_f16_projector_equal_to_the_base_tower_serves_the_base_tower(self):
+        # A converter that flushes F16 subnormals to zero equals it too.
+        for flush in (False, True):
+            with self.subTest(flush=flush):
+                commit = ("c" if flush else "e") * 40
+                self.fake.publish(
+                    SWIFT_GGUF,
+                    commit,
+                    lambda p: self.gguf_repository(p, self.tower, flush=flush),
+                )
+                chosen = selection(
+                    self.root,
+                    SWIFT_GGUF + ":Q4_K_M",
+                    revision=commit,
+                    language_only=False,
+                )
+                output, _ = self.prepare(chosen)
+                self.assertIn(
+                    f"vision: {SWIFT_GGUF} ships its vision tower only as "
+                    f"{F16_PROJECTOR}, which equals Qwen3.8-27B's base tower "
+                    f"within F16 rounding; {NOTICE}",
+                    output,
+                )
+                self.assert_gguf_with_base_tower(chosen)
+                # The projector was read by range requests, not downloaded.
+                self.assertIn(f"{SWIFT_GGUF}/{F16_PROJECTOR}", self.fake.range_reads)
+                self.assertNotIn(f"{SWIFT_GGUF}/{F16_PROJECTOR}", self.fake.downloads)
+
+    def assert_gguf_with_base_tower(self, chosen):
+        record = assembly.verify(chosen.link, full=True)
+        self.assertEqual(record["target_format"], "gguf")
+        self.assertEqual(record["vision_format"], "safetensors")
+        self.assertEqual(record["sources"]["vision"], BASE.identity())
+        self.assertNotIn(assembly.GGUF_VISION, record["files"])
+        self.assertEqual(
+            sorted(p.name for p in (chosen.link / "vision").iterdir()),
+            ["config.json", BASE.shard],
+        )
+        # The derived configuration states the base tower's vision_config.
+        config = models.read_json(chosen.link / "config.json")
+        self.assertEqual(config["vision_config"], VISION_CONFIG)
+        self.assertEqual(config["text_config"]["hidden_size"], 5120)
+        self.assertEqual(record["metadata"], assembly.metadata_key(record["files"]))
+
+    def test_a_gguf_f16_projector_unlike_the_base_tower_is_the_error(self):
+        changed = dict(self.tower)
+        qkv = changed["vision_tower.blocks.0.attn.qkv.weight"].copy()
+        qkv[1, 2] += 0.01
+        changed["vision_tower.blocks.0.attn.qkv.weight"] = qkv
+        self.fake.publish(
+            SWIFT_GGUF, "c" * 40, lambda p: self.gguf_repository(p, changed)
+        )
+        with self.assertRaisesRegex(
+            models.ModelError,
+            rf"{NO_PROJECTOR}; {F16_PROJECTOR} is not Qwen3.8-27B's base tower "
+            r"\(v\.blk\.0\.attn_qkv\.weight differs\); use --language-only to "
+            "serve text only$",
+        ):
+            self.prepare(
+                selection(self.root, SWIFT_GGUF + ":Q4_K_M", language_only=False)
+            )
+        self.assertFalse([d for d in self.fake.downloads if SWIFT_GGUF in d])
+
+    def test_the_rounding_allows_only_f16_underflow_and_overflow(self):
+        values = np.array([0.1, 3e-6, -3e-6, 1e5, -1e5], np.float32)
+        with np.errstate(over="ignore"):
+            rounded = values.astype("<f2")
+        self.assertTrue(upstream._equals_rounded(values, rounded.tobytes(), 1))
+        # Flushed subnormals and saturated overflows hold the same values.
+        rounded[1:] = [0, -0.0, 65504, -65504]
+        self.assertTrue(upstream._equals_rounded(values, rounded.tobytes(), 1))
+        for index, value in ((0, 0.1001), (2, 3e-6), (3, -65504), (1, 1e-4)):
+            with self.subTest(index=index):
+                changed = rounded.copy()
+                changed[index] = value
+                self.assertFalse(upstream._equals_rounded(values, changed.tobytes(), 1))
+        self.assertTrue(upstream._equals_rounded(values, values.tobytes(), 0))
+        self.assertFalse(
+            upstream._equals_rounded(values, (values * 1.001).tobytes(), 0)
+        )
+
+    def test_a_family_without_a_base_tower_keeps_the_error(self):
+        self.fake.publish(
+            "someone/moe", "b" * 40, lambda p: self.mlx_repository(p, family=MOE)
+        )
+        with self.assertRaisesRegex(
+            models.ModelError,
+            "^someone/moe has no vision tower; use --language-only to serve text only$",
+        ):
+            self.prepare(selection(self.root, "someone/moe", language_only=False))
+        self.fake.publish(
+            "someone/moe-gguf",
+            "c" * 40,
+            lambda p: self.gguf_repository(p, self.tower, family=MOE),
+        )
+        with self.assertRaisesRegex(
+            models.ModelError,
+            rf"{NO_PROJECTOR}; use --language-only to serve text only$",
+        ):
+            self.prepare(
+                selection(self.root, "someone/moe-gguf:Q4_K_M", language_only=False)
+            )
+        self.assertEqual(self.base_requests(), [])
+        # The projector's header was read to select it, and nothing else.
+        self.assertEqual(
+            self.fake.range_reads.count(f"someone/moe-gguf/{F16_PROJECTOR}"), 1
+        )
+
+    def test_language_only_is_unchanged(self):
+        self.fake.publish(SWIFT, "b" * 40, self.mlx_repository)
+        chosen = selection(self.root, SWIFT, language_only=True)
+        output, _ = self.prepare(chosen)
+        self.assertNotIn("vision:", output)
+        self.assert_record(
+            chosen,
+            "none",
+            self.target_files(
+                "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"
+            ),
+        )
+        self.fake.publish(
+            SWIFT_GGUF, "c" * 40, lambda p: self.gguf_repository(p, self.tower)
+        )
+        chosen = selection(self.root, SWIFT_GGUF + ":Q4_K_M", language_only=True)
+        output, _ = self.prepare(chosen)
+        self.assertNotIn("vision:", output)
+        record = assembly.verify(chosen.link)
+        self.assertEqual(
+            (record["vision_format"], set(record["sources"])),
+            ("none", {"target", "draft"}),
+        )
+        self.assertFalse((chosen.link / "vision").exists())
+        self.assertNotIn(f"{SWIFT_GGUF}/{F16_PROJECTOR}", self.fake.range_reads)
+        self.assertEqual(self.base_requests(), [])
+
+    def test_a_target_with_its_own_tower_is_unchanged(self):
+        self.fake.publish(
+            SWIFT, "b" * 40, lambda p: self.mlx_repository(p, with_tower=True)
+        )
+        chosen = selection(self.root, SWIFT, language_only=False)
+        output, _ = self.prepare(chosen)
+        self.assertNotIn("vision:", output)
+        target = self.fake.snapshot(SWIFT, "b" * 40)
+        self.assert_record(
+            chosen,
+            "safetensors",
+            self.target_files(
+                "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"
+            )
+            | {
+                "vision/config.json": target / "config.json",
+                "vision/model-00001-of-00002.safetensors": target
+                / "model-00001-of-00002.safetensors",
+            },
+        )
+        self.assertEqual(self.base_requests(), [])
+        self.assertFalse([d for d in self.fake.downloads if d.startswith(BASE.repo)])
 
 
 if __name__ == "__main__":

@@ -12,9 +12,11 @@ from types import SimpleNamespace
 from unittest import mock
 
 import httpx
+import numpy as np
 from huggingface_hub.errors import HfHubHTTPError
 from huggingface_hub.hf_api import RepoSibling
 
+from dev.tests import fixture_files
 from install import families, hub, models
 
 DENSE = families.named("Qwen3.8-27B")
@@ -193,3 +195,155 @@ def cached_snapshot(cache, repo_id, commit, build):
 
 def pins(cache):
     return sorted(ref.name for ref in cache.glob("*/refs/splash/*/*"))
+
+
+# Qwen3.8-27B's base vision tower (families.BASE_VISION), which the tests
+# publish at its pinned commit.
+BASE = families.BASE_VISION[DENSE.name]
+# A tower of one block in the layout the native loader binds
+# (VisionLoader.cpp), small enough to compare value by value.
+VISION_CONFIG = {
+    "depth": 1,
+    "hidden_size": 8,
+    "num_heads": 2,
+    "intermediate_size": 12,
+    "out_hidden_size": 16,
+    "patch_size": 2,
+    "spatial_merge_size": 2,
+    "temporal_patch_size": 2,
+    "in_channels": 3,
+    "num_position_embeddings": 4,
+    "hidden_act": "gelu_pytorch_tanh",
+    "deepstack_visual_indexes": [],
+}
+# Each tower tensor's MLX name (without vision_tower.) and GGUF name, as
+# VisionLoader.cpp binds them; the patch embedding is split per frame.
+TOWER_NAMES = {
+    "patch_embed.proj.weight": ("v.patch_embd.weight", "v.patch_embd.weight.1"),
+    "patch_embed.proj.bias": ("v.patch_embd.bias",),
+    "pos_embed.weight": ("v.position_embd.weight",),
+    **{
+        f"{mlx}.{kind}": (f"{name}.{kind}",)
+        for mlx, name in (
+            ("blocks.0.norm1", "v.blk.0.ln1"),
+            ("blocks.0.attn.qkv", "v.blk.0.attn_qkv"),
+            ("blocks.0.attn.proj", "v.blk.0.attn_out"),
+            ("blocks.0.norm2", "v.blk.0.ln2"),
+            ("blocks.0.mlp.linear_fc1", "v.blk.0.ffn_up"),
+            ("blocks.0.mlp.linear_fc2", "v.blk.0.ffn_down"),
+            ("merger.norm", "v.post_ln"),
+            ("merger.linear_fc1", "mm.0"),
+            ("merger.linear_fc2", "mm.2"),
+        )
+        for kind in ("weight", "bias")
+    },
+}
+
+
+def tower(seed=0):
+    """The base tower's tensors by MLX name, as float32 arrays of BF16
+    values. Each one's first value is one F16 holds only as a subnormal."""
+    c = VISION_CONFIG
+    h, p, i = c["hidden_size"], c["patch_size"], c["intermediate_size"]
+    merged = h * c["spatial_merge_size"] ** 2
+    shapes = {
+        "patch_embed.proj.weight": (h, 2, p, p, 3),
+        "patch_embed.proj.bias": (h,),
+        "pos_embed.weight": (c["num_position_embeddings"], h),
+        "blocks.0.norm1.weight": (h,),
+        "blocks.0.norm1.bias": (h,),
+        "blocks.0.attn.qkv.weight": (3 * h, h),
+        "blocks.0.attn.qkv.bias": (3 * h,),
+        "blocks.0.attn.proj.weight": (h, h),
+        "blocks.0.attn.proj.bias": (h,),
+        "blocks.0.norm2.weight": (h,),
+        "blocks.0.norm2.bias": (h,),
+        "blocks.0.mlp.linear_fc1.weight": (i, h),
+        "blocks.0.mlp.linear_fc1.bias": (i,),
+        "blocks.0.mlp.linear_fc2.weight": (h, i),
+        "blocks.0.mlp.linear_fc2.bias": (h,),
+        "merger.norm.weight": (h,),
+        "merger.norm.bias": (h,),
+        "merger.linear_fc1.weight": (merged, merged),
+        "merger.linear_fc1.bias": (merged,),
+        "merger.linear_fc2.weight": (c["out_hidden_size"], merged),
+        "merger.linear_fc2.bias": (c["out_hidden_size"],),
+    }
+    assert shapes.keys() == TOWER_NAMES.keys()
+    rng = np.random.default_rng(seed)
+    tensors = {}
+    for name, shape in shapes.items():
+        values = rng.normal(0, 0.05, shape).astype(np.float32)
+        values.flat[0] = 3e-6
+        bf16 = values.view(np.uint32) & np.uint32(0xFFFF0000)
+        tensors["vision_tower." + name] = bf16.view(np.float32)
+    return tensors
+
+
+def base_vision_repo(root, tensors):
+    """The base tower's repository: config.json stating VISION_CONFIG, the
+    processor configuration and BASE.shard, holding the tower in BF16 beside
+    a language model tensor."""
+    root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "text_config": text_config(DENSE),
+        "vision_config": VISION_CONFIG,
+        "quantization": {"bits": 4, "group_size": 64},
+    }
+    (root / "config.json").write_text(json.dumps(config))
+    (root / "preprocessor_config.json").write_text(json.dumps(PROCESSOR))
+    shard = {
+        name: (
+            list(values.shape),
+            "BF16",
+            (values.view(np.uint32) >> 16).astype("<u2").tobytes(),
+        )
+        for name, values in tensors.items()
+    }
+    shard["language_model.lm_head.weight"] = ([1], "U8", b"\0")
+    fixture_files.write_safetensors(root / BASE.shard, shard)
+    return root
+
+
+def projector(path, tensors, *, flush=False):
+    """An mmproj of tensors as llama.cpp converts a tower: weights F16,
+    biases and norms F32, the patch embedding one [output, channel, row,
+    column] F16 tensor per frame. flush rounds F16 subnormals to zero, as a
+    converter may."""
+    c = VISION_CONFIG
+    grid = int(c["num_position_embeddings"] ** 0.5)
+    metadata = {
+        "general.architecture": "clip",
+        "clip.projector_type": "qwen3vl_merger",
+        "clip.use_gelu": True,
+        "clip.vision.block_count": c["depth"],
+        "clip.vision.embedding_length": c["hidden_size"],
+        "clip.vision.attention.head_count": c["num_heads"],
+        "clip.vision.attention.layer_norm_epsilon": 1e-6,
+        "clip.vision.feed_forward_length": c["intermediate_size"],
+        "clip.vision.projection_dim": c["out_hidden_size"],
+        "clip.vision.patch_size": c["patch_size"],
+        "clip.vision.spatial_merge_size": c["spatial_merge_size"],
+        "clip.vision.image_size": grid * c["patch_size"],
+        "clip.vision.is_deepstack_layers": [False] * c["depth"],
+        "clip.vision.image_mean": [0.5] * 3,
+        "clip.vision.image_std": [0.5] * 3,
+    }
+    table = []
+    for name, names in TOWER_NAMES.items():
+        values = tensors["vision_tower." + name]
+        frames = (
+            [values[:, frame].transpose(0, 3, 1, 2) for frame in (0, 1)]
+            if len(names) == 2
+            else [values]
+        )
+        for gguf_name, frame in zip(names, frames, strict=True):
+            if frame.ndim > 1:
+                data = np.ascontiguousarray(frame).astype("<f2")
+                if flush:
+                    data[np.abs(data) < 2.0**-14] = 0
+                kind = 1
+            else:
+                data, kind = frame.astype("<f4"), 0
+            table.append((gguf_name, list(reversed(frame.shape)), kind, data.tobytes()))
+    return fixture_files.write_gguf(path, metadata, table)

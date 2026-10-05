@@ -27,7 +27,12 @@ The paths an assembly links, and what reads each:
                          DraftCheckpoint.cpp)
   vision/config.json, vision/<shard>
                          the MLX shards holding vision_tower.*
-                         (VisionLoader.cpp, through SafetensorsCheckpoint.mm)
+                         (VisionLoader.cpp, through SafetensorsCheckpoint.mm):
+                         the target's, or its family's base tower, which the
+                         record names as a third source, "vision"
+                         (families.BASE_VISION); beside a GGUF target, the
+                         derived config.json takes vision/config.json's
+                         vision_config
   vision/mmproj.gguf     the GGUF vision projector (VisionLoader.cpp)
 """
 
@@ -35,6 +40,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -48,6 +54,7 @@ else:
     import models
 
 GGUF_VISION = "vision/mmproj.gguf"
+MLX_VISION_CONFIG = "vision/config.json"
 TARGET_FORMATS = ("mlx-affine", "gguf")
 VISION_FORMATS = ("none", "safetensors", "gguf")
 RECORD_KEYS = {
@@ -186,7 +193,9 @@ def _well_formed(record):
         and record["vision_format"] in VISION_FORMATS
         and (not gguf_target or models.is_hex_digest(record["metadata"], 64))
         and isinstance(sources, dict)
-        and set(sources) == {"target", "draft"}
+        # A base vision tower is a third source, and only an MLX tower.
+        and set(sources) - {"vision"} == {"target", "draft"}
+        and ("vision" not in sources or record["vision_format"] == "safetensors")
         and all(
             isinstance(source, dict)
             and set(source) == {"repo", "revision"}
@@ -253,12 +262,17 @@ def recorded_pins(link: Path):
 
 
 def _metadata_inputs(files):
-    """The assembly paths of the GGUF files the derived metadata comes from,
-    in order: the target, then the vision projector."""
+    """The assembly paths of the files the derived metadata comes from, in
+    order: the target GGUF, then the vision projector, or the configuration
+    of an MLX vision tower beside it."""
     targets = [
         n for n in sorted(files) if n.startswith("target/") and n.endswith(".gguf")
     ]
-    return targets + ([GGUF_VISION] if GGUF_VISION in files else [])
+    if GGUF_VISION in files:
+        return targets + [GGUF_VISION]
+    return targets + (
+        [MLX_VISION_CONFIG] if targets and MLX_VISION_CONFIG in files else []
+    )
 
 
 def _metadata_key(sources):
@@ -286,14 +300,27 @@ def metadata_key(file_records):
 
 def derived_metadata(models_root: Path, files):
     """The key and the files, by assembly path, of the metadata derived from
-    the GGUF files among files (assembly path -> source file): derived once,
-    and again when its entry is damaged. Call it under the installation lock."""
-    inputs = [files[name] for name in _metadata_inputs(files)]
+    the GGUF files among files (assembly path -> source file), with an MLX
+    vision tower's vision_config: derived once, and again when its entry is
+    damaged. Call it under the installation lock."""
+    names = _metadata_inputs(files)
+    inputs = [files[name] for name in names]
     sources = [file_record(path) for path in inputs]
     key = _metadata_key(sources)
 
     def write(stage):
-        contents = gguf.derived_files(*inputs)
+        if names[-1] == MLX_VISION_CONFIG:
+            contents = gguf.derived_files(*inputs[:-1])
+            config = json.loads(contents["config.json"])
+            vision = models.read_json(inputs[-1]).get("vision_config")
+            if not isinstance(vision, dict):
+                raise models.ModelError(
+                    "the vision tower's config.json has no vision_config"
+                )
+            config["vision_config"] = vision
+            contents["config.json"] = models.json_bytes(config)
+        else:
+            contents = gguf.derived_files(*inputs)
         if [file_record(path) for path in inputs] != sources:
             raise models.ModelError("GGUF source changed while reading metadata")
         for name, data in contents.items():
