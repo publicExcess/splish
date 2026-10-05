@@ -39,6 +39,13 @@ inline void copy(Image &image, const std::string &name, std::vector<uint64_t> sh
   append(image, std::move(section));
 }
 
+// An RMSNorm gain stored as gamma, written as bf16(gamma + 1) as the packed
+// format stores it (AffinePreparation.cpp).
+inline void unitOffset(Image &image, const std::string &name, std::vector<uint64_t> shape) {
+  copy(image, name, std::move(shape));
+  image.sections.back().kind = SectionKind::UnitOffset;
+}
+
 // Binds every input of image to its checkpoint tensor, which must have one of
 // the input's dtypes and its shape, once the checkpoint states the
 // quantization of every affine module the image reads.

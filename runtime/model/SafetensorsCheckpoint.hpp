@@ -18,6 +18,8 @@ public:
   ~SafetensorsCheckpoint();
   [[nodiscard]] const SourceTensor *find(std::string_view name) const noexcept;
   [[nodiscard]] const SourceTensor &require(std::string_view name) const;
+  // Whether a tensor's name starts with prefix.
+  [[nodiscard]] bool hasPrefix(std::string_view prefix) const noexcept;
   void requireQuantization(std::string_view projection, uint32_t bits) const;
   void requireConfigNumber(std::string_view key, double expected) const;
   void requireConfigString(std::string_view key, std::string_view expected) const;

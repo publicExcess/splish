@@ -6,7 +6,8 @@
 // codes, scales and biases are reordered into 256-row tiles without
 // requantization, a BF16 projection is quantized into the same tiles as MLX's
 // affine quantization rounds it, the GDN decay becomes
-// float(-exp(double(A_log))), and every other tensor is copied as stored.
+// float(-exp(double(A_log))), an RMSNorm gain stored without its unit offset
+// becomes bf16(float(gain) + 1), and every other tensor is copied as stored.
 
 #include "model/PreparedWeights.hpp"
 
@@ -16,7 +17,7 @@
 
 namespace splash::model::affine {
 
-enum class SectionKind { Copy, Decay, Projection, Quantize };
+enum class SectionKind { Copy, Decay, Projection, Quantize, UnitOffset };
 
 // A checkpoint tensor a section reads: its name, the dtypes it is read in and
 // its shape, planned from the layout; tensor is bound once the checkpoint is
@@ -38,7 +39,7 @@ struct ProjectionPart {
 struct Section {
   SectionKind kind = SectionKind::Copy;
   uint64_t offset = 0, bytes = 0;
-  Input input; // Copy and Decay
+  Input input; // Copy, Decay and UnitOffset
   // Projection and Quantize: the parts in row order. A Projection's rows past
   // them are zero; a Quantize section has none, nor experts, and 4 bits.
   std::vector<ProjectionPart> parts;

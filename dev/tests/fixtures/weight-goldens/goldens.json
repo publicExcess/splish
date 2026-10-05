@@ -50,6 +50,18 @@
       "draft/layer-0.bin": "283c85c3c12a1777fc05ef1306a45fc3a180963f8477191d49abf09d0a1afb00",
       "draft/layer-1.bin": "5b5b0e09cba0218be18586751d4412ef689db465c1ac3976011365ff575c4d14",
       "draft/model.bin": "377d2766849aa742ad6a1027f9779ec5553b1c5a336a333b309207f26e94f901"
+    },
+    "dense-mtp-unshifted": {
+      "target/layer-0.bin": "d4659eb86eeb5e14c1a43d4e649aa612686583f651af772d9644165479f5628d",
+      "target/layer-1.bin": "bc75d5aef7f483b727c30aea127757d6ef34baa6ff715c491dfd91360db1b20d",
+      "target/head.bin": "7eaea8a0f4b5239cce8cea58602ad1b4e1a03e42669078c9686e6899ee475cca",
+      "target/embedding.bin": "5bfea1223081c0b006d617ee0fc044517937a4cd9fe9503421537e8d8c459211"
+    },
+    "dense-mtp-shifted": {
+      "target/layer-0.bin": "7c1e14dc4db008e7ae4f4e38aa4d14059732bbe3978d2f4c99d430fef6fbcf31",
+      "target/layer-1.bin": "bc75d5aef7f483b727c30aea127757d6ef34baa6ff715c491dfd91360db1b20d",
+      "target/head.bin": "7eaea8a0f4b5239cce8cea58602ad1b4e1a03e42669078c9686e6899ee475cca",
+      "target/embedding.bin": "5bfea1223081c0b006d617ee0fc044517937a4cd9fe9503421537e8d8c459211"
     }
   },
   "vision_image": "f1a165335c42384479f73d83e69146cfa46d4964d66ed13c663b158fed08cdd5"

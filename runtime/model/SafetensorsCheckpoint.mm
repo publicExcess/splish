@@ -155,6 +155,10 @@ const SourceTensor *SafetensorsCheckpoint::find(std::string_view name) const noe
   const auto found = impl_->tensors.find(name);
   return found == impl_->tensors.end() ? nullptr : &found->second;
 }
+bool SafetensorsCheckpoint::hasPrefix(std::string_view prefix) const noexcept {
+  const auto found = impl_->tensors.lower_bound(prefix);
+  return found != impl_->tensors.end() && std::string_view(found->first).starts_with(prefix);
+}
 const SourceTensor &SafetensorsCheckpoint::require(std::string_view name) const {
   const SourceTensor *tensor = find(name);
   if (!tensor) throw WeightStoreError("missing source tensor: " + std::string(name));

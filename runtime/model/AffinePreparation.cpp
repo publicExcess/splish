@@ -199,6 +199,24 @@ void writeDecay(int destination, const Section &section) {
   writeWeightBytes(destination, section.offset, {reinterpret_cast<const uint8_t *>(values.data()), section.bytes});
 }
 
+// bf16(float(gain) + 1) of a BF16 vector, rounded once to nearest even: an
+// RMSNorm gain stored without the unit offset every packed norm but the GDN
+// norm carries (AffineTarget.cpp). It is staged whole, within the bound.
+void writeUnitOffset(int destination, const Section &section, std::vector<uint8_t> &input) {
+  const SourceTensor &tensor = *section.input.tensor;
+  if (tensor.bytes != section.bytes || tensor.bytes > input.size())
+    throw std::runtime_error("unit-offset norm exceeds the preparation staging bound");
+  const std::span<uint8_t> bytes(input.data(), tensor.bytes);
+  tensor.read(0, bytes);
+  for (uint64_t at = 0; at < bytes.size(); at += kBFloat16Bytes) {
+    const float value = bfloat16Value(bytes.data() + at) + 1.0F;
+    if (!std::isfinite(value)) throw std::runtime_error("non-finite RMSNorm gain");
+    const uint16_t bits = nearestBfloat16(value);
+    std::memcpy(bytes.data() + at, &bits, sizeof bits);
+  }
+  writeWeightBytes(destination, section.offset, bytes);
+}
+
 } // namespace
 
 // The key: this code's identity, the plan and the bytes, dtype and shape of
@@ -242,6 +260,9 @@ void writeAffineImage(int destination, const Image &image, const PreparationChec
     case SectionKind::Copy:
       inputBytes = std::max(inputBytes, std::min(section.bytes, kChunkBytes));
       break;
+    case SectionKind::UnitOffset:
+      inputBytes = std::max(inputBytes, std::min(section.bytes, kChunkBytes));
+      break;
     case SectionKind::Decay:
       break;
     }
@@ -262,6 +283,9 @@ void writeAffineImage(int destination, const Image &image, const PreparationChec
       break;
     case SectionKind::Copy:
       section.input.tensor->copy(destination, section.offset, input, admit);
+      break;
+    case SectionKind::UnitOffset:
+      writeUnitOffset(destination, section, input);
       break;
     }
   }

@@ -6,6 +6,10 @@
 #include "model/StateLayout.hpp"
 #include "model/WeightLayout.hpp"
 
+#include <bit>
+#include <string>
+#include <vector>
+
 namespace splash::model {
 namespace {
 
@@ -16,6 +20,32 @@ using affine::Image;
 using affine::ProjectionPart;
 using affine::Section;
 using affine::SectionKind;
+
+// Whether the checkpoint stores its RMSNorm gains as gamma, without the unit
+// offset (gamma + 1) of MLX's conversion. mlx-lm's sanitize adds it to every
+// norm but the GDN norm as it drops the MTP head, so a checkpoint keeping
+// mtp.* tensors skipped it (ukisai/Swift-1.5-4bit-MLX). Some exports keep the
+// head and add the offset anyway (Jundot/Qwen3.8-27B-oQ4e-mtp), so the gains
+// decide: trained gains centre near 1 with the offset and near 0 without it.
+// Checkpoints without mtp.* are taken as stored.
+bool normsLackUnitOffset(const SafetensorsCheckpoint &source, uint32_t layers) {
+  if (!source.hasPrefix("mtp.")) return false;
+  double sum = 0;
+  uint64_t count = 0;
+  for (uint32_t layer = 0; layer < layers; ++layer) {
+    const SourceTensor *gain =
+        source.find("language_model.model.layers." + std::to_string(layer) + ".input_layernorm.weight");
+    // Binding reports a missing or malformed gain.
+    if (!gain || gain->dtype != "BF16" || gain->bytes > (1u << 20)) return false;
+    std::vector<uint8_t> bytes(gain->bytes);
+    gain->read(0, bytes);
+    for (uint64_t at = 0; at + 1 < bytes.size(); at += 2) {
+      sum += std::bit_cast<float>(uint32_t(bytes[at] | bytes[at + 1] << 8) << 16);
+      ++count;
+    }
+  }
+  return count && sum / double(count) < 0.5;
+}
 
 // Projection parts, stacked in row order, padded with zero rows to `rows`.
 void projection(Image &image, std::initializer_list<std::pair<std::string, uint32_t>> parts,
@@ -75,20 +105,26 @@ void validateConfiguration(const SafetensorsCheckpoint &source, const Layout &la
   }
 }
 
+// A layer's image; with unitOffset, its norms but the GDN norm are stored as
+// gamma (normsLackUnitOffset) and written as bf16(gamma + 1).
 template<class Layout>
-Image layerImage(const Layout &layout, uint32_t layer) {
+Image layerImage(const Layout &layout, uint32_t layer, bool unitOffset = false) {
   const bool full = layout.isFullAttentionLayer(layer);
   Image result = image("layer-" + std::to_string(layer) + ".bin", Layout::layerMagic, layer, full ? 1u : 0u);
   const std::string prefix = "language_model.model.layers." + std::to_string(layer) + ".";
-  copy(result, prefix + "input_layernorm.weight", {layout.hiddenSize});
+  const auto norm = [&](const std::string &name, uint32_t size) {
+    if (unitOffset) affine::unitOffset(result, name, {size});
+    else copy(result, name, {size});
+  };
+  norm(prefix + "input_layernorm.weight", layout.hiddenSize);
   if (full) {
     const std::string attention = prefix + "self_attn.";
     projection(result, {{attention + "q_proj", 2 * layout.attentionWidth},
                                 {attention + "k_proj", layout.attentionKvHeads * layout.attentionHeadDimension},
                                 {attention + "v_proj", layout.attentionKvHeads * layout.attentionHeadDimension}},
                layout.packedFullWidth, layout.hiddenSize);
-    copy(result, attention + "q_norm.weight", {layout.attentionHeadDimension});
-    copy(result, attention + "k_norm.weight", {layout.attentionHeadDimension});
+    norm(attention + "q_norm.weight", layout.attentionHeadDimension);
+    norm(attention + "k_norm.weight", layout.attentionHeadDimension);
     projection(result, {{attention + "o_proj", layout.hiddenSize}}, layout.hiddenSize, layout.attentionWidth);
   } else {
     const std::string gdn = prefix + "linear_attn.";
@@ -104,10 +140,11 @@ Image layerImage(const Layout &layout, uint32_t layer) {
     decay.bytes = uint64_t(layout.gdnValueHeads) * sizeof(float);
     append(result, std::move(decay));
     copy(result, gdn + "dt_bias", {layout.gdnValueHeads});
+    // The gated GDN norm is stored as gamma in both conventions.
     copy(result, gdn + "norm.weight", {layout.gdnHeadDimension});
     projection(result, {{gdn + "out_proj", layout.hiddenSize}}, layout.hiddenSize, layout.attentionWidth);
   }
-  copy(result, prefix + "post_attention_layernorm.weight", {layout.hiddenSize});
+  norm(prefix + "post_attention_layernorm.weight", layout.hiddenSize);
   const std::string mlp = prefix + "mlp.";
   const auto ffn = [&](const std::string &name, uint32_t intermediate, uint32_t experts = 1) {
     for (const std::string projectionName : {"gate_proj", "up_proj", "down_proj"}) {
@@ -131,9 +168,10 @@ Image layerImage(const Layout &layout, uint32_t layer) {
 }
 
 template<class Layout>
-Image headImage(const Layout &layout) {
+Image headImage(const Layout &layout, bool unitOffset = false) {
   Image result = image("head.bin", Layout::headMagic, layout.layers, 2);
-  copy(result, "language_model.model.norm.weight", {layout.hiddenSize});
+  if (unitOffset) affine::unitOffset(result, "language_model.model.norm.weight", {layout.hiddenSize});
+  else copy(result, "language_model.model.norm.weight", {layout.hiddenSize});
   projection(result, {{"language_model.lm_head", layout.vocabularySize}}, layout.vocabularySize, layout.hiddenSize);
   return result;
 }
@@ -152,10 +190,11 @@ Image embeddingImage(const Layout &layout) {
 
 // Every image of a layout: the layers, the head, the embedding.
 template<class Layout>
-std::vector<Image> images(const Layout &layout) {
+std::vector<Image> images(const Layout &layout, bool unitOffset = false) {
   std::vector<Image> result;
-  for (uint32_t layer = 0; layer < layout.layers; ++layer) result.push_back(layerImage(layout, layer));
-  result.push_back(headImage(layout));
+  for (uint32_t layer = 0; layer < layout.layers; ++layer)
+    result.push_back(layerImage(layout, layer, unitOffset));
+  result.push_back(headImage(layout, unitOffset));
   result.push_back(embeddingImage(layout));
   return result;
 }
@@ -182,7 +221,7 @@ struct AffineTargetLoader::Impl {
         files([&backend] { backend.checkOperation(); }, std::move(admitConversion),
               [this] { source.checkUnchanged(); }) {
     validateConfiguration(source, layout);
-    images = model::images(layout);
+    images = model::images(layout, normsLackUnitOffset(source, layout.layers));
     for (Image &image : images) {
       backend.checkOperation();
       affine::bind(image, source);

@@ -8,7 +8,9 @@
 - `gguf_images`: every image `gguf-preparation` prepares from its dense and
   MoE GGUF fixtures.
 - `affine_images`: every image `run_affine_preparation.py` prepares from its
-  dense and MoE checkpoints and its DFlash2 draft checkpoint.
+  dense and MoE checkpoints, its dense checkpoints keeping an MTP head with
+  RMSNorm gains stored as gamma (`dense-mtp-unshifted`) or as gamma + 1
+  (`dense-mtp-shifted`), and its DFlash2 draft checkpoint.
 - `vision_image`: the file every `run_vision_preparation.py` tower prepares.
 
 A prepared-image hash fails on any change of prepared bytes. When a change
