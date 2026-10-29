@@ -4,6 +4,14 @@
 [![Release](https://img.shields.io/badge/release-splish--v1.1-green.svg)](https://github.com/publicExcess/splish/releases/tag/splish-v1.1)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/severalviolins)
 
+> **Status (October 2026): on hiatus.** Splish is a one-man project, and my time is now going into Qwen3.8 Flash-Next,
+> mainly its quality, in [Ijah](https://github.com/publicExcess/ijah). Splish v1.1 was built on Splash 1.1.0, and Splash
+> has moved on a long way since. On my 40-core M5 Max, stock Splash 1.5.0 now matches Splish v1.1 at one or two requests
+> and is faster at three or four (+13% and +17%, Qwen3.8-27B 4-bit, long reasoning). The results below compare against
+> Splash 1.1.0 and no longer hold against current Splash, so for new installs I recommend
+> [Splash](https://github.com/incoai/splash) itself. I may offer the pieces that still matter (the copy rule and a few
+> serving fixes) upstream. The release and results stay here for reference.
+
 Splish is an **unofficial** fork of [Inco's Splash](https://github.com/incoai/splash), not affiliated with Inco. We
 retune and extend Splash's Metal kernels with one piece of hardware in mind: a 40-core **M5 Max** (128 GB, macOS 27).
 That device is what we support; where our findings carry over to other Macs, we share them. At present we focus on
@@ -13,7 +21,7 @@ That device is what we support; where our findings carry over to other Macs, we 
 differently. Rather than ask Inco to maintain hardware-specific work, we keep it here. The general pieces (kernel
 choices loaded from a file, the copy rule, the benchmark tools) are available upstream if Inco wants them.
 
-## Results
+## Results (against Splash 1.1.0, September 2026)
 
 **Splish v1.1** (September 2026) builds on v1.0 with newly tuned kernel choices (faster at 2–4 requests on the
 Qwen3.8-27B family and at one request on Qwen3.6-35B-A3B), a tuned table for the 20-core M5 Pro, and fixes for
